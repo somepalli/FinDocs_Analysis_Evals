@@ -16,6 +16,7 @@ class QueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     mode: ReasoningMode | None = None
     question_id: str | None = Field(default=None, min_length=1, max_length=200)
+    document_ids: tuple[str, ...] = Field(default=(), max_length=20)
 
 
 class QueryResponse(BaseModel):
@@ -33,6 +34,31 @@ class ExtractRequest(BaseModel):
 
     question: str = Field(min_length=1, max_length=4000)
     question_id: str | None = Field(default=None, min_length=1, max_length=200)
+    document_ids: tuple[str, ...] = Field(default=(), max_length=20)
+
+
+class IngestDocumentRequest(BaseModel):
+    """Versioned PDF upload contract for trusted local pipeline callers."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    contract_version: Literal["1.0"] = "1.0"
+    filename: str = Field(min_length=5, max_length=240, pattern=r"^[^/\\]+\.[Pp][Dd][Ff]$")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_base64: str = Field(min_length=8)
+
+
+class IngestDocumentResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    contract_version: Literal["1.0"] = "1.0"
+    document_id: str
+    filename: str
+    sha256: str
+    page_count: int = Field(ge=1)
+    chunk_count: int = Field(ge=1)
+    chunk_ids: tuple[str, ...] = Field(min_length=1)
+    config_hash: str
 
 
 class ExtractResponse(BaseModel):

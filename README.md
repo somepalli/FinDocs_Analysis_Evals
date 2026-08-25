@@ -409,3 +409,19 @@ attached to the table chunk.
 - The Phase 7 retrieval benchmark has 31 questions from one ICRA-rationale
   corpus. It is useful for strategy comparison, not a production-quality or
   cross-domain claim.
+## Authenticated document ingestion
+
+Downstream local applications can index a PDF through `POST /v1/documents`. Configure
+an external storage root and a separate write token before starting the API:
+
+```powershell
+$env:FINDOCIQ_DOCUMENT_ROOT = `
+  "$env:USERPROFILE\Documents\FunderMatch_Data\findociq_documents"
+$env:FINDOCIQ_INGEST_TOKEN = "replace-with-a-separate-random-ingestion-token"
+uv run findociq-api --port 8989
+```
+
+The versioned request carries a PDF as base64 plus its SHA-256. FinDocIQ validates the
+type, size, and digest, then performs Docling/PyMuPDF parsing, provenance-preserving
+chunking, BGE-M3 embedding, and Qdrant indexing. `/extract` and `/v1/query` accept
+optional `document_ids`, preventing evidence from unrelated borrowers entering a case.

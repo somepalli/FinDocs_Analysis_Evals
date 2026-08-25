@@ -58,9 +58,12 @@ services:
     environment:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      FINDOCIQ_DOCUMENT_ROOT: /data/documents
+      FINDOCIQ_INGEST_TOKEN: ${FINDOCIQ_INGEST_TOKEN:?set FINDOCIQ_INGEST_TOKEN}
     volumes:
       - ./.artifacts/models:/app/.artifacts/models:ro
       - ./.artifacts/observability:/app/.artifacts/observability
+      - ${FINDOCIQ_DOCUMENT_ROOT_HOST:-../FunderMatch_Data/findociq_documents}:/data/documents
     command:
       - findociq-api
       - --host

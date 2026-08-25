@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from findociq.api.app import create_app
+from findociq.api.schema import IngestDocumentResponse
 from findociq.ingest.schema import BoundingBox
 from findociq.reason.schema import (
     ExtractedFigure,
@@ -57,6 +58,23 @@ class FakeQueryService:
                 citations=(source,),
             ),
             extraction=extraction,
+        )
+
+
+class FakeIngestionService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def ingest(self, request):  # type: ignore[no-untyped-def]
+        self.calls.append(request)
+        return IngestDocumentResponse(
+            document_id=request.sha256,
+            filename=request.filename,
+            sha256=request.sha256,
+            page_count=2,
+            chunk_count=3,
+            chunk_ids=("chunk-1", "chunk-2", "chunk-3"),
+            config_hash="a" * 64,
         )
 
 
@@ -136,3 +154,34 @@ def test_extract_rejects_unknown_request_fields() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_document_ingestion_requires_token_and_returns_versioned_receipt() -> None:
+    import base64
+    import hashlib
+
+    content = b"%PDF-1.7 synthetic"
+    digest = hashlib.sha256(content).hexdigest()
+    ingestion = FakeIngestionService()
+    client = TestClient(
+        create_app(
+            service=FakeQueryService(),
+            ingestion_service=ingestion,  # type: ignore[arg-type]
+            ingest_token="local-ingestion-token-123456789",
+        )
+    )
+    payload = {
+        "filename": "borrower.pdf",
+        "sha256": digest,
+        "content_base64": base64.b64encode(content).decode(),
+    }
+    assert client.post("/v1/documents", json=payload).status_code == 401
+    response = client.post(
+        "/v1/documents",
+        json=payload,
+        headers={"X-FinDocIQ-Ingest-Token": "local-ingestion-token-123456789"},
+    )
+    assert response.status_code == 201
+    assert response.json()["document_id"] == digest
+    assert response.json()["chunk_count"] == 3
+    assert len(ingestion.calls) == 1

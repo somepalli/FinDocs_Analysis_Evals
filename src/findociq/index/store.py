@@ -43,7 +43,9 @@ class RetrievalStore(Protocol):
 
     def upsert(self, records: Sequence[IndexRecord]) -> None: ...
 
-    def dense_search(self, query: Embedding, limit: int) -> tuple[RetrievalHit, ...]: ...
+    def dense_search(
+        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = ()
+    ) -> tuple[RetrievalHit, ...]: ...
 
     def hybrid_search(
         self,
@@ -51,6 +53,7 @@ class RetrievalStore(Protocol):
         limit: int,
         prefetch_limit: int,
         rrf_k: int,
+        document_ids: tuple[str, ...] = (),
     ) -> tuple[RetrievalHit, ...]: ...
 
 
@@ -98,14 +101,17 @@ class QdrantStore:
         ]
         client.upsert(collection_name=self.config.collection, points=points, wait=True)
 
-    def dense_search(self, query: Embedding, limit: int) -> tuple[RetrievalHit, ...]:
-        client, _ = self._dependencies()
+    def dense_search(
+        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = ()
+    ) -> tuple[RetrievalHit, ...]:
+        client, models = self._dependencies()
         response = client.query_points(
             collection_name=self.config.collection,
             query=list(query.dense),
             using=self.config.dense_vector_name,
             limit=limit,
             with_payload=True,
+            query_filter=self._document_filter(models, document_ids),
         )
         return self._hits(response.points, "dense")
 
@@ -115,6 +121,7 @@ class QdrantStore:
         limit: int,
         prefetch_limit: int,
         rrf_k: int,
+        document_ids: tuple[str, ...] = (),
     ) -> tuple[RetrievalHit, ...]:
         client, models = self._dependencies()
         response = client.query_points(
@@ -137,8 +144,22 @@ class QdrantStore:
             query=models.RrfQuery(rrf=models.Rrf(k=rrf_k)),
             limit=limit,
             with_payload=True,
+            query_filter=self._document_filter(models, document_ids),
         )
         return self._hits(response.points, "hybrid_rrf")
+
+    @staticmethod
+    def _document_filter(models: Any, document_ids: tuple[str, ...]) -> Any | None:
+        if not document_ids:
+            return None
+        return models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="chunk.provenance[].document_id",
+                    match=models.MatchAny(any=list(document_ids)),
+                )
+            ]
+        )
 
     def _dependencies(self) -> tuple[Any, Any]:
         try:

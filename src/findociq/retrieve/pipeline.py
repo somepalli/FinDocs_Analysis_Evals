@@ -96,7 +96,11 @@ class RetrievalPipeline:
         self._cache: dict[str, tuple[RetrievalHit, ...]] = {}
 
     def retrieve(
-        self, query: str, *, trace_context: TraceContext | None = None
+        self,
+        query: str,
+        *,
+        trace_context: TraceContext | None = None,
+        document_ids: tuple[str, ...] = (),
     ) -> tuple[RetrievalHit, ...]:
         if not query.strip():
             raise ValueError("query must not be blank")
@@ -108,7 +112,8 @@ class RetrievalPipeline:
             "retrieval.total",
             {"strategy": self.config.name, "mode": self.config.mode},
         ) as total_attributes:
-            cached = self._cache.get(query)
+            cache_key = f"{query}\0{'|'.join(document_ids)}"
+            cached = self._cache.get(cache_key)
             total_attributes["cache_hit"] = cached is not None
             if cached is not None:
                 total_attributes["hit_count"] = len(cached)
@@ -121,14 +126,22 @@ class RetrievalPipeline:
                 {"mode": self.config.mode, "requested_hits": self.config.retrieve_top_k},
             ) as search_attributes:
                 if self.config.mode == "dense":
-                    hits = self.store.dense_search(embedding, self.config.retrieve_top_k)
+                    hits = (
+                        self.store.dense_search(
+                            embedding, self.config.retrieve_top_k, document_ids
+                        )
+                        if document_ids
+                        else self.store.dense_search(embedding, self.config.retrieve_top_k)
+                    )
                 else:
-                    hits = self.store.hybrid_search(
-                        embedding,
+                    search_options = dict(
                         limit=self.config.retrieve_top_k,
                         prefetch_limit=self.config.prefetch_top_k,
                         rrf_k=self.config.rrf_k,
                     )
+                    if document_ids:
+                        search_options["document_ids"] = document_ids
+                    hits = self.store.hybrid_search(embedding, **search_options)
                 search_attributes["hit_count"] = len(hits)
             if self.reranker is None or self.config.rerank_top_k is None:
                 results = self._normalize_ranks(hits)
@@ -141,7 +154,7 @@ class RetrievalPipeline:
                     results = self._rerank(query, hits)
                     rerank_attributes["hit_count"] = len(results)
             total_attributes["hit_count"] = len(results)
-            self._cache[query] = results
+            self._cache[cache_key] = results
             return results
 
     def _rerank(self, query: str, hits: tuple[RetrievalHit, ...]) -> tuple[RetrievalHit, ...]:
