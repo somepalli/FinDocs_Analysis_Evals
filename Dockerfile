@@ -9,15 +9,14 @@ ENV PATH="/app/.venv/bin:$PATH" \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --extra api --extra retrieval --extra observability \
+RUN uv sync --frozen --no-dev --extra api --extra docling --extra retrieval --extra observability \
     --no-install-project
 
 COPY src ./src
 COPY evals ./evals
 COPY configs ./configs
-RUN uv sync --frozen --no-dev --extra api --extra retrieval --extra observability
+RUN uv sync --frozen --no-dev --extra api --extra docling --extra retrieval --extra observability
 
 EXPOSE 8989
 
 CMD ["findociq-api", "--host", "0.0.0.0", "--port", "8989", "--config", "configs/api/docker.yaml"]
-

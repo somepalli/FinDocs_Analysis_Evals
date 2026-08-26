@@ -33,7 +33,7 @@ def create_app(
     ingestion_service: DocumentIngestionService | None = None,
     ingest_token: str | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="FinDocIQ", version="0.1.0")
+    app = FastAPI(title="FinDocIQ", version="0.1.1")
     app.state.query_service = service
     app.state.config_path = config_path
     app.state.ingestion_service = ingestion_service

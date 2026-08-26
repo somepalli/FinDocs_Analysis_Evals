@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -144,10 +145,16 @@ def build_observer(config: ObservabilityConfig, *, reset: bool = False) -> Trace
     if not config.enabled:
         return TraceObserver()
     recorders: list[TraceRecorder] = [JsonlRecorder(config.trace_path, reset=reset)]
-    if config.langfuse is not None and config.langfuse.enabled:
+    langfuse = config.langfuse
+    if (
+        langfuse is not None
+        and langfuse.enabled
+        and os.environ.get(langfuse.public_key_env)
+        and os.environ.get(langfuse.secret_key_env)
+    ):
         from findociq.observability.langfuse import LangfuseOtlpRecorder
 
-        recorders.append(LangfuseOtlpRecorder(config.langfuse))
+        recorders.append(LangfuseOtlpRecorder(langfuse))
     recorder: TraceRecorder = (
         recorders[0] if len(recorders) == 1 else CompositeRecorder(*recorders)
     )

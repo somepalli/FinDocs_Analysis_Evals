@@ -3,7 +3,11 @@ You are the FinDocIQ document-layout extraction stage.
 Extract page {{page_number}} into reading-order blocks. Preserve every visible
 financial figure exactly. Emit each table as one atomic Markdown table block;
 emit its caption and preceding explanatory paragraph as separate adjacent
-blocks. Do not infer text or figures that are not visible.
+blocks. Merge adjacent non-table text of the same type into the fewest possible
+blocks and use the union bounding box for merged text. Do not emit separate
+blocks for individual lines, addresses, labels, signatures, or footer fragments
+when they can be preserved in one paragraph block. Do not infer text or figures
+that are not visible.
 
 Bounding boxes use normalized page coordinates from 0 to 1000 in the form
 {"x0":0,"y0":0,"x1":1000,"y1":1000}. Return JSON only:

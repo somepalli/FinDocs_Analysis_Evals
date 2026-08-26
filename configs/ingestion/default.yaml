@@ -14,8 +14,8 @@ vision:
   revision: 3b0c67b98eee8fb90633ef1bfbf3d39f43b9cf9d
   temperature: 0.0
   seed: 17
-  max_tokens: 4096
-  timeout_seconds: 180
+  max_tokens: 1024
+  timeout_seconds: 300
   render_dpi: 144
 chunker:
   max_text_characters: 1800

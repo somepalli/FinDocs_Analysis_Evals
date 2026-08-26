@@ -239,7 +239,12 @@ def _request_json(request: Request, timeout_seconds: int) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
             payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError) as error:
+    except HTTPError as error:
+        detail = error.read(2_000).decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"local Gemma vision extraction failed: HTTP {error.code}: {detail}"
+        ) from error
+    except (URLError, TimeoutError) as error:
         raise RuntimeError(f"local Gemma vision extraction failed: {error}") from error
     if not isinstance(payload, dict):
         raise RuntimeError("local Gemma vision response must be a JSON object")
