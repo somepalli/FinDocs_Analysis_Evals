@@ -61,11 +61,12 @@ def create_app(
             root = os.environ.get("FINDOCIQ_DOCUMENT_ROOT")
             if not root:
                 raise HTTPException(503, "document ingestion storage is not configured")
+            api_config = ApiConfig.from_yaml(request.app.state.config_path)
             current = build_ingestion_service(
                 storage_root=Path(root),
-                ingestion_config=Path("configs/ingestion/default.yaml"),
-                index_config=Path("configs/index/default.yaml"),
-                retrieval_config=Path("configs/retrieval/hybrid_rerank.yaml"),
+                ingestion_config=api_config.ingestion_config,
+                index_config=api_config.index_config,
+                retrieval_config=api_config.retrieval_config,
             )
             request.app.state.ingestion_service = current
         return current

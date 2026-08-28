@@ -1,8 +1,8 @@
 index_config: ../index/docker.yaml
+ingestion_config: ../ingestion/docker.yaml
 retrieval_config: ../retrieval/hybrid_rerank.yaml
 generation_config: ../reasoning/gemma_vllm_docker.yaml
 single_pass_config: ../pipeline/single_pass.yaml
 two_pass_config: ../pipeline/two_pass.yaml
 observability_config: ../observability/langfuse_docker.yaml
 default_mode: two_pass
-

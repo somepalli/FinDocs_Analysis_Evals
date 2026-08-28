@@ -17,6 +17,15 @@ from findociq.ingest.vlm_fallback import (
 )
 from findociq.observability.recorder import InMemoryRecorder, TraceObserver
 
+
+def test_vision_config_accepts_internal_vllm_service_endpoint() -> None:
+    config = VisionConfig(
+        base_url="http://vllm:8000/v1",
+        model_id="google/gemma-3-4b-it",
+        revision="8f28faf05c382a2dd81a471090acdb23156eb354",
+    )
+    assert config.base_url == "http://vllm:8000/v1"
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

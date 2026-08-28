@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +13,7 @@ from findociq.retrieve.pipeline import (
     RetrievalRuntimeConfig,
     RetrievalStrategyConfig,
 )
-from findociq.retrieve.rerank import RerankerConfig
+from findociq.retrieve.rerank import BgeReranker, RerankerConfig
 from findociq.retrieve.schema import RetrievalHit
 
 ROOT = Path(__file__).parents[1]
@@ -109,6 +110,64 @@ def test_bge_m3_adapter_emits_dense_and_sorted_sparse_vectors() -> None:
     assert embedding.dense == (0.1, 0.2)
     assert embedding.sparse.indices == (2, 9)
     assert embedding.sparse.values == (0.2, 0.9)
+
+
+def test_bge_m3_uses_existing_pinned_snapshot_without_hub_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loaded: list[str] = []
+
+    class Model:
+        def __init__(self, snapshot: str, **_: object) -> None:
+            loaded.append(snapshot)
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "FlagEmbedding",
+        SimpleNamespace(BGEM3FlagModel=Model),
+    )
+    snapshot = tmp_path / "bge-m3"
+    snapshot.mkdir()
+    embedder = BgeM3Embedder(
+        EmbeddingConfig(
+            model_id="BAAI/bge-m3",
+            revision="pinned-revision",
+            snapshot_dir=str(snapshot),
+        )
+    )
+
+    embedder._get_model()  # noqa: SLF001
+
+    assert loaded == [str(snapshot.resolve())]
+
+
+def test_reranker_uses_existing_pinned_snapshot_without_hub_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loaded: list[str] = []
+
+    class Model:
+        def __init__(self, snapshot: str, **_: object) -> None:
+            loaded.append(snapshot)
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "FlagEmbedding",
+        SimpleNamespace(FlagReranker=Model),
+    )
+    snapshot = tmp_path / "reranker"
+    snapshot.mkdir()
+    reranker = BgeReranker(
+        RerankerConfig(
+            model_id="BAAI/bge-reranker-v2-m3",
+            revision="pinned-revision",
+            snapshot_dir=str(snapshot),
+        )
+    )
+
+    reranker._get_model()  # noqa: SLF001
+
+    assert loaded == [str(snapshot.resolve())]
 
 
 def test_index_record_preserves_discriminated_chunk_type() -> None:

@@ -29,7 +29,12 @@ class LangfuseOtlpConfig(BaseModel):
         from urllib.parse import urlparse
 
         parsed = urlparse(self.base_url)
-        if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        if parsed.scheme != "http" or parsed.hostname not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "host.docker.internal",
+        }:
             raise ValueError("Langfuse must use a self-hosted local HTTP endpoint")
         return self
 

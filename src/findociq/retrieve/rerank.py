@@ -54,17 +54,26 @@ class BgeReranker:
         if self._model is None:
             try:
                 from FlagEmbedding import FlagReranker
-                from huggingface_hub import snapshot_download
             except ImportError as error:
                 raise RuntimeError(
                     "reranker dependencies are missing; run `uv sync --extra retrieval`"
                 ) from error
-            snapshot = Path(
-                snapshot_download(
-                    repo_id=self.config.model_id,
-                    revision=self.config.revision,
-                    local_dir=self.config.snapshot_dir,
+            if self.config.snapshot_dir is not None:
+                snapshot = Path(self.config.snapshot_dir).resolve()
+                if not snapshot.is_dir():
+                    raise RuntimeError(f"pinned reranker snapshot is missing: {snapshot}")
+            else:
+                try:
+                    from huggingface_hub import snapshot_download
+                except ImportError as error:
+                    raise RuntimeError(
+                        "Hugging Face Hub is required when no local reranker snapshot is set"
+                    ) from error
+                snapshot = Path(
+                    snapshot_download(
+                        repo_id=self.config.model_id,
+                        revision=self.config.revision,
+                    )
                 )
-            )
             self._model = FlagReranker(str(snapshot), use_fp16=self.config.use_fp16)
         return self._model

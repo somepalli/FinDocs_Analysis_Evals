@@ -1,4 +1,5 @@
 index_config: ../index/default.yaml
+ingestion_config: ../ingestion/default.yaml
 retrieval_config: ../retrieval/hybrid_rerank.yaml
 generation_config: ../reasoning/gemma_vllm_laptop.yaml
 single_pass_config: ../pipeline/single_pass.yaml

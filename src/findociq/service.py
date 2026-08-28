@@ -28,6 +28,7 @@ class ApiConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     index_config: Path
+    ingestion_config: Path
     retrieval_config: Path
     generation_config: Path
     single_pass_config: Path
@@ -43,6 +44,7 @@ class ApiConfig(BaseModel):
             raise ValueError(f"API config must be a mapping: {source}")
         for key in (
             "index_config",
+            "ingestion_config",
             "retrieval_config",
             "generation_config",
             "single_pass_config",

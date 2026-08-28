@@ -87,7 +87,12 @@ class GenerationConfig(BaseModel):
     @model_validator(mode="after")
     def validate_local_endpoint(self) -> GenerationConfig:
         parsed = urlparse(self.base_url)
-        if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        if parsed.scheme != "http" or parsed.hostname not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "vllm",
+        }:
             raise ValueError("generation base_url must be a local HTTP endpoint")
         if not 0 <= self.temperature <= 2:
             raise ValueError("temperature must be between 0 and 2")

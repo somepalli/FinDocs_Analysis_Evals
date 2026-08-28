@@ -128,6 +128,16 @@ def test_generation_config_is_local_deterministic_and_yaml_backed() -> None:
         )
 
 
+def test_generation_config_accepts_internal_vllm_service_endpoint() -> None:
+    config = GenerationConfig(
+        base_url="http://vllm:8000/v1",
+        model_id="google/gemma-3-4b-it",
+        revision="8f28faf05c382a2dd81a471090acdb23156eb354",
+        backend="vllm",
+    )
+    assert config.base_url == "http://vllm:8000/v1"
+
+
 def test_all_generation_tiers_are_pinned_awq_derivatives() -> None:
     tiers = [
         ModelTierConfig.from_yaml(ROOT / "configs/model_tiers" / f"{name}.yaml")

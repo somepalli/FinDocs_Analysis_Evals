@@ -53,7 +53,12 @@ class VisionConfig(BaseModel):
     @model_validator(mode="after")
     def validate_local_endpoint(self) -> VisionConfig:
         parsed = urlparse(self.base_url)
-        if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        if parsed.scheme != "http" or parsed.hostname not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "vllm",
+        }:
             raise ValueError("vision base_url must be a local HTTP endpoint")
         return self
 

@@ -64,6 +64,14 @@ def test_observability_config_is_typed_and_content_safe() -> None:
         LangfuseOtlpConfig(enabled=True, base_url="https://cloud.langfuse.com")
 
 
+def test_langfuse_configuration_accepts_docker_desktop_host_gateway() -> None:
+    config = LangfuseOtlpConfig(
+        enabled=True,
+        base_url="http://host.docker.internal:3000",
+    )
+    assert config.base_url == "http://host.docker.internal:3000"
+
+
 def test_observer_records_success_and_error_without_exception_text() -> None:
     recorder = InMemoryRecorder()
     observer = TraceObserver(recorder, StepClock(0, 2_000_000, 3_000_000, 8_000_000))
