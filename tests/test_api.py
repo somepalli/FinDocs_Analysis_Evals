@@ -77,11 +77,16 @@ class FakeIngestionService:
             config_hash="a" * 64,
         )
 
+    def ingest_batch(self, requests, *, progress=None):  # type: ignore[no-untyped-def]
+        if progress:
+            progress("waiting_gpu", "Waiting for GPU", total=len(requests))
+        return tuple(self.ingest(request) for request in requests)
+
 
 def test_api_config_resolves_reviewed_pipeline_paths() -> None:
     config = ApiConfig.from_yaml(ROOT / "configs/api/default.yaml")
     assert config.default_mode == "two_pass"
-    assert config.generation_config.name == "gemma_vllm.yaml"
+    assert config.generation_config.name == "gemma_vllm_laptop.yaml"
     assert config.observability_config.name == "langfuse.yaml"
     paths = (path for path in config.model_dump().values() if isinstance(path, Path))
     assert all(path.is_absolute() for path in paths)
@@ -185,3 +190,79 @@ def test_document_ingestion_requires_token_and_returns_versioned_receipt() -> No
     assert response.json()["document_id"] == digest
     assert response.json()["chunk_count"] == 3
     assert len(ingestion.calls) == 1
+
+
+def test_document_batch_uses_one_versioned_request() -> None:
+    import base64
+    import hashlib
+
+    contents = (b"%PDF-1.7 first", b"%PDF-1.7 second")
+    documents = [
+        {
+            "filename": f"borrower-{index}.pdf",
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "content_base64": base64.b64encode(content).decode(),
+        }
+        for index, content in enumerate(contents, start=1)
+    ]
+    ingestion = FakeIngestionService()
+    client = TestClient(
+        create_app(
+            service=FakeQueryService(),
+            ingestion_service=ingestion,  # type: ignore[arg-type]
+            ingest_token="local-ingestion-token-123456789",
+        )
+    )
+
+    response = client.post(
+        "/v1/document-batches",
+        json={"documents": documents},
+        headers={"X-FinDocIQ-Ingest-Token": "local-ingestion-token-123456789"},
+    )
+
+    assert response.status_code == 201
+    assert len(response.json()["documents"]) == 2
+    assert [request.filename for request in ingestion.calls] == [
+        "borrower-1.pdf",
+        "borrower-2.pdf",
+    ]
+
+
+def test_document_batch_exposes_sanitized_live_activity() -> None:
+    import base64
+    import hashlib
+
+    content = b"%PDF-1.7 activity"
+    digest = hashlib.sha256(content).hexdigest()
+    token = "local-ingestion-token-123456789"
+    client = TestClient(
+        create_app(
+            service=FakeQueryService(),
+            ingestion_service=FakeIngestionService(),  # type: ignore[arg-type]
+            ingest_token=token,
+        )
+    )
+    response = client.post(
+        "/v1/document-batches",
+        json={
+            "batch_id": "job-live-1",
+            "documents": [
+                {
+                    "filename": "borrower.pdf",
+                    "sha256": digest,
+                    "content_base64": base64.b64encode(content).decode(),
+                }
+            ],
+        },
+        headers={"X-FinDocIQ-Ingest-Token": token},
+    )
+    assert response.status_code == 201
+
+    activity = client.get(
+        "/v1/document-batches/job-live-1/activity",
+        headers={"X-FinDocIQ-Ingest-Token": token},
+    )
+    assert activity.status_code == 200
+    assert activity.json()["status"] == "completed"
+    assert activity.json()["events"][0]["stage"] == "waiting_gpu"
+    assert "content_base64" not in activity.text

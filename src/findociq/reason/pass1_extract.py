@@ -105,10 +105,14 @@ def _repair_grounded_output(
         return repaired
     repaired_figures: list[object] = []
     for item in figures:
-        if not isinstance(item, dict) or item.get("citation") is not None:
+        if not isinstance(item, dict):
             repaired_figures.append(item)
             continue
-        citation = _unique_value_citation(item.get("value"), hits)
+        citation = _unique_value_citation(
+            item.get("value"), hits, proposed=item.get("citation")
+        )
+        if citation is None:
+            citation = _canonical_evidence_citation(item.get("citation"), hits)
         if citation is None:
             repaired_figures.append(item)
             continue
@@ -120,7 +124,10 @@ def _repair_grounded_output(
 
 
 def _unique_value_citation(
-    raw_value: object, hits: tuple[RetrievalHit, ...]
+    raw_value: object,
+    hits: tuple[RetrievalHit, ...],
+    *,
+    proposed: object = None,
 ) -> SourceCitation | None:
     if not isinstance(raw_value, str) or not raw_value.strip():
         return None
@@ -135,7 +142,60 @@ def _unique_value_citation(
         if text_matches:
             matching.extend(citation_from_provenance(item) for item in hit.chunk.provenance)
     identities = {citation_identity(item): item for item in matching}
-    return next(iter(identities.values())) if len(identities) == 1 else None
+    if len(identities) == 1:
+        return next(iter(identities.values()))
+    if not isinstance(proposed, dict):
+        return None
+    try:
+        proposed_citation = SourceCitation.model_validate(proposed)
+    except ValueError:
+        return None
+    matching_page = {
+        identity: citation
+        for identity, citation in identities.items()
+        if citation.document_id == proposed_citation.document_id
+        and citation.page_number == proposed_citation.page_number
+    }
+    if len(matching_page) == 1:
+        return next(iter(matching_page.values()))
+    if matching_page:
+        try:
+            return ground_citation(
+                proposed_citation, matching_page.values(), minimum_iou=0.01
+            )
+        except ValueError:
+            pass
+    return None
+
+
+def _canonical_evidence_citation(
+    proposed: object, hits: tuple[RetrievalHit, ...]
+) -> SourceCitation | None:
+    """Snap a model bbox only when its retrieved document/page is unambiguous."""
+    if not isinstance(proposed, dict):
+        return None
+    try:
+        proposed_citation = SourceCitation.model_validate(proposed)
+    except ValueError:
+        return None
+    candidates = {
+        citation_identity(citation): citation
+        for hit in hits
+        for provenance in hit.chunk.provenance
+        if (citation := citation_from_provenance(provenance)).document_id
+        == proposed_citation.document_id
+        and citation.page_number == proposed_citation.page_number
+    }
+    if len(candidates) == 1:
+        return next(iter(candidates.values()))
+    if candidates:
+        try:
+            return ground_citation(
+                proposed_citation, candidates.values(), minimum_iou=0.01
+            )
+        except ValueError:
+            pass
+    return None
 
 
 def _normalized_numbers(value: str) -> tuple[Decimal, ...]:

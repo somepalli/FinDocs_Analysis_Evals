@@ -1,6 +1,6 @@
 backend: vllm
 base_url: http://localhost:8900/v1
-tier_config: ../model_tiers/single_gpu.yaml
+tier_config: ../model_tiers/laptop.yaml
 temperature: 0.0
 seed: 17
 max_tokens: 1024

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "findociq"
-version = "0.1.1"
+version = "0.2.0"
 description = "Open-weights financial document intelligence for Indian filings"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -19,6 +19,10 @@ dependencies = [
 [project.optional-dependencies]
 api = ["uvicorn==0.52.1"]
 docling = ["docling==2.62.0"]
+gpu = [
+  "torch==2.13.0",
+  "torchvision==0.28.0",
+]
 observability = [
   "opentelemetry-exporter-otlp-proto-http==1.44.0",
   "opentelemetry-sdk==1.44.0",
@@ -55,3 +59,16 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]

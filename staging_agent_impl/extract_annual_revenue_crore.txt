@@ -1,0 +1,2 @@
+Extract the latest annual revenue in INR crore. Return the figure with its exact
+document_id, page_number, and bounding box provenance.

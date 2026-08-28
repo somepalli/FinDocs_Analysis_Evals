@@ -1,0 +1,10 @@
+{"case_id":"ROUTE-001","mode":"reviewer_selected","reason":"Revenue was taken from the wrong year.","selected_stage":"financial_analysis","expected_stage":"financial_analysis","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-002","mode":"reviewer_selected","reason":"A document is missing.","selected_stage":"document_processing","expected_stage":"document_processing","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-003","mode":"reviewer_selected","reason":"Policy threshold needs rerunning.","selected_stage":"eligibility","expected_stage":"eligibility","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-004","mode":"reviewer_selected","reason":"Refresh comparable cases.","selected_stage":"precedent_retrieval","expected_stage":"precedent_retrieval","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-005","mode":"supervisor_clear","reason":"The EBITDA margin was extracted from the prior period.","selected_stage":"supervisor","expected_stage":"financial_analysis","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-006","mode":"supervisor_clear","reason":"The uploaded sanction letter was not ingested.","selected_stage":"supervisor","expected_stage":"document_processing","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-007","mode":"supervisor_clear","reason":"The collateral threshold was applied incorrectly.","selected_stage":"supervisor","expected_stage":"eligibility","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-008","mode":"supervisor_clear","reason":"The precedent results are stale.","selected_stage":"supervisor","expected_stage":"precedent_retrieval","expected_stop_state":"waiting_for_review"}
+{"case_id":"ROUTE-009","mode":"supervisor_ambiguous","reason":"Please take another look.","selected_stage":"supervisor","expected_stage":null,"expected_stop_state":"needs_attention"}
+{"case_id":"ROUTE-010","mode":"supervisor_ambiguous","reason":"This does not seem right.","selected_stage":"supervisor","expected_stage":null,"expected_stop_state":"needs_attention"}

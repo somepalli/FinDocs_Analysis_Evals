@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import fitz
 
@@ -29,6 +29,8 @@ from findociq.ingest.vlm_fallback import (
 class ParserConfig:
     prefer_docling: bool = True
     fail_on_vision_required: bool = True
+    accelerator_device: Literal["auto", "cpu", "cuda"] = "auto"
+    ocr_backend: Literal["torch"] = "torch"
 
 
 class TableExtractionFailed(RuntimeError):
@@ -112,12 +114,39 @@ class DocumentParser:
         """
 
         try:
-            from docling.document_converter import DocumentConverter
+            from docling.datamodel.accelerator_options import (
+                AcceleratorDevice,
+                AcceleratorOptions,
+            )
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
+            from docling.document_converter import DocumentConverter, PdfFormatOption
         except ImportError:
             return None
 
         try:
-            converted = DocumentConverter().convert(path)
+            device = AcceleratorDevice(self.config.accelerator_device)
+            rapidocr_params = (
+                {
+                    "EngineConfig.torch.use_cuda": True,
+                    "EngineConfig.torch.cuda_ep_cfg.device_id": 0,
+                }
+                if device is AcceleratorDevice.CUDA
+                else {}
+            )
+            pipeline_options = PdfPipelineOptions(
+                accelerator_options=AcceleratorOptions(device=device),
+                ocr_options=RapidOcrOptions(
+                    backend=self.config.ocr_backend,
+                    rapidocr_params=rapidocr_params,
+                ),
+            )
+            converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                }
+            )
+            converted = converter.convert(path)
             docling_document = converted.document
             items = docling_document.iterate_items()
             by_page: dict[int, list[DocumentBlock]] = {

@@ -6,6 +6,8 @@ router:
 parser:
   prefer_docling: false
   fail_on_vision_required: false
+  accelerator_device: cpu
+  ocr_backend: torch
 vision:
   enabled: false
   backend: vllm
@@ -20,4 +22,9 @@ vision:
 chunker:
   max_text_characters: 1800
   overlap_characters: 180
+gpu_lease:
+  enabled: false
+  base_url: http://127.0.0.1:8900
+  sleep_level: 1
+  timeout_seconds: 600
 observability_config: ../observability/phase7_annual_reports.yaml

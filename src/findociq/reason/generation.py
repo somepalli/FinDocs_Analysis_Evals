@@ -56,7 +56,7 @@ class GenerationConfig(BaseModel):
     temperature: float = 0.0
     seed: int = 17
     max_tokens: int = Field(default=1024, gt=0)
-    timeout_seconds: int = Field(default=120, gt=0)
+    timeout_seconds: int = Field(default=600, gt=0)
     model_tier: Literal["laptop", "single_gpu", "ceiling"] | None = None
     quantization: Literal["awq-int4"] | None = None
 

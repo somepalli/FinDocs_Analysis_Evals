@@ -1,0 +1,47 @@
+name: Agent safety and recovery
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  deterministic-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run ruff check src tests
+      - name: Unit, guardrail, memory, recovery, and trace-leak gates
+        run: uv run pytest -q
+
+  docker-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_DB: fundermatch
+          POSTGRES_USER: fundermatch
+          POSTGRES_PASSWORD: fundermatch-local-only
+        ports: ["7444:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fundermatch -d fundermatch"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      qdrant:
+        image: qdrant/qdrant:v1.15.5
+        ports: ["6999:6333"]
+    env:
+      FUNDERMATCH_DATABASE_URL: postgresql://fundermatch:fundermatch-local-only@localhost:7444/fundermatch
+      FUNDERMATCH_QDRANT_URL: http://127.0.0.1:6999
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --extra dev
+      - run: uv run fundermatch-migrate-workflow
+      - run: uv run fundermatch-migrate-memory
+      - name: PostgreSQL checkpoint restart and isolation tests
+        run: uv run pytest -q tests/test_agent_memory.py tests/test_intake_jobs.py

@@ -1,6 +1,7 @@
 """FastAPI application with routes kept intentionally thin."""
 
 import argparse
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import ValidationError
 
+from findociq.api.activity import IngestionActivityRegistry
 from findociq.api.ingestion import (
     DocumentIngestionError,
     DocumentIngestionService,
@@ -18,12 +20,17 @@ from findociq.api.schema import (
     ExtractRequest,
     ExtractResponse,
     HealthResponse,
+    IngestBatchRequest,
+    IngestBatchResponse,
     IngestDocumentRequest,
     IngestDocumentResponse,
+    IngestionActivityResponse,
     QueryRequest,
     QueryResponse,
 )
 from findociq.service import ApiConfig, FinDocIQService, build_service
+
+LOGGER = logging.getLogger(__name__)
 
 
 def create_app(
@@ -32,12 +39,14 @@ def create_app(
     config_path: Path = Path("configs/api/default.yaml"),
     ingestion_service: DocumentIngestionService | None = None,
     ingest_token: str | None = None,
+    activity_registry: IngestionActivityRegistry | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="FinDocIQ", version="0.1.1")
+    app = FastAPI(title="FinDocIQ", version="0.2.0")
     app.state.query_service = service
     app.state.config_path = config_path
     app.state.ingestion_service = ingestion_service
     app.state.ingest_token = ingest_token
+    app.state.activity_registry = activity_registry or IngestionActivityRegistry()
 
     def get_service(request: Request) -> FinDocIQService:
         current = request.app.state.query_service
@@ -76,7 +85,8 @@ def create_app(
             if payload.document_ids:
                 kwargs["document_ids"] = payload.document_ids
             result = query_service.query(payload.question, **kwargs)
-        except (RuntimeError, OSError) as error:
+        except (RuntimeError, OSError, ValueError) as error:
+            LOGGER.exception("query inference failed")
             raise HTTPException(
                 status_code=503, detail="local inference pipeline unavailable"
             ) from error
@@ -96,7 +106,8 @@ def create_app(
             if payload.document_ids:
                 kwargs["document_ids"] = payload.document_ids
             result = query_service.query(payload.question, **kwargs)
-        except (RuntimeError, OSError) as error:
+        except (RuntimeError, OSError, ValueError) as error:
+            LOGGER.exception("structured extraction failed")
             raise HTTPException(
                 status_code=503, detail="local inference pipeline unavailable"
             ) from error
@@ -125,6 +136,62 @@ def create_app(
             raise HTTPException(422, str(error)) from error
         except (RuntimeError, OSError) as error:
             raise HTTPException(503, "document ingestion pipeline unavailable") from error
+
+    @app.post("/v1/document-batches", response_model=IngestBatchResponse, status_code=201)
+    def ingest_document_batch(
+        payload: IngestBatchRequest,
+        document_service: Annotated[DocumentIngestionService, Depends(get_ingestion_service)],
+        x_findociq_ingest_token: Annotated[str | None, Header()] = None,
+    ) -> IngestBatchResponse:
+        expected = app.state.ingest_token or os.getenv("FINDOCIQ_INGEST_TOKEN")
+        if not expected or not x_findociq_ingest_token or not secrets.compare_digest(
+            expected, x_findociq_ingest_token
+        ):
+            raise HTTPException(401, "valid ingestion token required")
+        registry: IngestionActivityRegistry = app.state.activity_registry
+        if payload.batch_id:
+            registry.start(payload.batch_id)
+
+        def report(stage: str, message: str, **details: object) -> None:
+            if payload.batch_id:
+                registry.report(payload.batch_id, stage, message, **details)
+
+        try:
+            documents = document_service.ingest_batch(payload.documents, progress=report)
+            if payload.batch_id:
+                registry.finish(payload.batch_id, "completed")
+            return IngestBatchResponse(documents=documents)
+        except (DocumentIngestionError, ValidationError) as error:
+            if payload.batch_id:
+                registry.finish(payload.batch_id, "failed")
+            raise HTTPException(422, str(error)) from error
+        except (RuntimeError, OSError) as error:
+            if payload.batch_id:
+                registry.finish(payload.batch_id, "failed")
+            raise HTTPException(503, "document ingestion pipeline unavailable") from error
+        except Exception:
+            if payload.batch_id:
+                registry.finish(payload.batch_id, "failed")
+            raise
+
+    @app.get(
+        "/v1/document-batches/{batch_id}/activity",
+        response_model=IngestionActivityResponse,
+    )
+    def document_batch_activity(
+        batch_id: str,
+        after: int = 0,
+        x_findociq_ingest_token: Annotated[str | None, Header()] = None,
+    ) -> IngestionActivityResponse:
+        expected = app.state.ingest_token or os.getenv("FINDOCIQ_INGEST_TOKEN")
+        if not expected or not x_findociq_ingest_token or not secrets.compare_digest(
+            expected, x_findociq_ingest_token
+        ):
+            raise HTTPException(401, "valid ingestion token required")
+        snapshot = app.state.activity_registry.snapshot(batch_id, after=max(0, after))
+        if snapshot is None:
+            raise HTTPException(404, "document batch activity not found")
+        return snapshot
 
     return app
 

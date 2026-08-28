@@ -1,7 +1,7 @@
 backend: vllm
 base_url: http://vllm:8000/v1
-tier_config: ../model_tiers/laptop_12gb_docker.yaml
+tier_config: ../model_tiers/laptop.yaml
 temperature: 0.0
 seed: 17
 max_tokens: 1024
-timeout_seconds: 120
+timeout_seconds: 600

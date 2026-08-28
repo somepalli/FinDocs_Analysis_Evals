@@ -6,12 +6,14 @@ router:
 parser:
   prefer_docling: true
   fail_on_vision_required: true
+  accelerator_device: cuda
+  ocr_backend: torch
 vision:
   enabled: true
   backend: vllm
   base_url: http://localhost:8900/v1
-  model_id: google/gemma-3-12b-it
-  revision: 3b0c67b98eee8fb90633ef1bfbf3d39f43b9cf9d
+  model_id: google/gemma-3-4b-it
+  revision: 8f28faf05c382a2dd81a471090acdb23156eb354
   temperature: 0.0
   seed: 17
   max_tokens: 1024
@@ -20,4 +22,9 @@ vision:
 chunker:
   max_text_characters: 1800
   overlap_characters: 180
+gpu_lease:
+  enabled: true
+  base_url: http://127.0.0.1:8900
+  sleep_level: 1
+  timeout_seconds: 600
 observability_config: ../observability/langfuse.yaml

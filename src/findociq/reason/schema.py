@@ -50,6 +50,15 @@ class ReasonedAnswer(BaseModel):
     citations: tuple[SourceCitation, ...] = Field(min_length=1)
 
 
+class Pass2EvidenceSelection(BaseModel):
+    """Pass-2 output that refers to canonical pass-1 evidence by stable ID."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    answer: str = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = Field(min_length=1)
+
+
 class ReasoningRun(BaseModel):
     """Result envelope used to compare single- and two-pass runs."""
 

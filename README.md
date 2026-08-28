@@ -356,7 +356,7 @@ retrieval and reasoning logic stays in `src/findociq/`. The query response
 schema requires at least one `(document, page, bbox)` citation.
 
 ```powershell
-uv sync --extra api --extra retrieval --extra observability
+uv sync --extra api --extra docling --extra gpu --extra retrieval --extra observability
 uv run findociq-api --config configs/api/default.yaml
 Invoke-RestMethod http://127.0.0.1:8989/healthz
 ```
@@ -365,10 +365,19 @@ For the conflict-free Docker stack, host ports are FinDocIQ API `8989`, vLLM
 `8900`, Qdrant REST `6999`, and Qdrant gRPC `7000`. Container-to-container
 traffic retains the images' standard internal ports. The 12 GB laptop Docker
 profile uses single-request vLLM concurrency, eager execution, the V1 model
-runner for Docker Desktop/WSL compatibility, and a measured 2K context window.
-It serves the pinned 12B AWQ model; the 8K `single_gpu` tier requires more VRAM
-because this GPU has only about 0.5 GiB left for KV cache after loading the
-multimodal weights.
+runner for Docker Desktop/WSL compatibility, and an 8K context window. It serves
+the pinned 4B AWQ laptop tier. The 12B tier remains the project default for
+larger GPUs, but it cannot use vLLM's sleep allocator on this RTX 4080: the
+model plus sleep-mode private pools exceed 12 GB of VRAM.
+
+The GPU profile enables vLLM sleep mode on a localhost-only port. During an
+authenticated document batch, vLLM level-1 sleep offloads its weights to system
+RAM and releases VRAM; Docling/OCR and BGE-M3 then process the complete batch.
+FinDocIQ releases ingestion models and wakes vLLM in a failure-safe `finally`
+path before generation resumes. The development control endpoints are not
+exposed beyond localhost. Local smoke runs measured 5.0-15.7 seconds to enter
+level-1 sleep and 1.7-4.9 seconds to wake. Those are single-machine switching
+observations, not throughput benchmarks; batching amortizes them across all PDFs.
 
 `POST /v1/query` accepts `question`, optional `question_id`, and optional
 `mode` (`single_pass` or `two_pass`). The configured two-pass mode is used when
@@ -411,17 +420,30 @@ attached to the table chunk.
   cross-domain claim.
 ## Authenticated document ingestion
 
-Downstream local applications can index a PDF through `POST /v1/documents`. Configure
-an external storage root and a separate write token before starting the API:
+Downstream local applications can index a PDF through `POST /v1/documents`, or send
+multiple PDFs through `POST /v1/document-batches` so one GPU lease covers the entire
+batch. Configure an external storage root and a separate write token before starting
+the API:
 
 ```powershell
 $env:FINDOCIQ_DOCUMENT_ROOT = `
   "$env:USERPROFILE\Documents\FunderMatch_Data\findociq_documents"
 $env:FINDOCIQ_INGEST_TOKEN = "replace-with-a-separate-random-ingestion-token"
-uv run findociq-api --port 8989
+uv run --extra api --extra docling --extra gpu --extra retrieval findociq-api --port 8989
 ```
 
 The versioned request carries a PDF as base64 plus its SHA-256. FinDocIQ validates the
 type, size, and digest, then performs Docling/PyMuPDF parsing, provenance-preserving
 chunking, BGE-M3 embedding, and Qdrant indexing. `/extract` and `/v1/query` accept
 optional `document_ids`, preventing evidence from unrelated borrowers entering a case.
+The batch endpoint uses the same versioned document contracts and returns one receipt
+per PDF. Prefer it for borrower uploads: repeatedly sleeping and waking the model
+for individual documents adds avoidable switching overhead.
+
+Callers may include a sanitized `batch_id` and poll
+`GET /v1/document-batches/{batch_id}/activity?after=<sequence>` with the ingestion
+token while the batch request is running. The activity contract reports GPU waiting,
+the current filename, parsing/OCR, chunking, embedding, Qdrant indexing, model release,
+and vLLM readiness. It is deliberately bounded and in-memory: durable user-facing job
+history belongs to the downstream application, and document text or model payloads are
+never included in these events.

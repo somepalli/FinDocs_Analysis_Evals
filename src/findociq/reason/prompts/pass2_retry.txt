@@ -1,0 +1,18 @@
+You are repairing an invalid FinDocIQ pass-2 response.
+
+Answer the analyst question using only the structured extraction below. Select
+one or more evidence_id values exactly as provided. Never return document IDs,
+page numbers, bounding boxes, or invented evidence IDs. Return JSON only:
+{"answer":"...","evidence_ids":["evidence_1"]}
+
+QUESTION:
+{{QUESTION}}
+
+STRUCTURED EXTRACTION:
+{{EXTRACTION}}
+
+INVALID RESPONSE:
+{{INVALID_RESPONSE}}
+
+VALIDATION ERROR:
+{{ERROR}}

@@ -37,7 +37,21 @@ def render_evidence(hits: tuple[RetrievalHit, ...]) -> str:
 
 
 def render_extraction(extraction: Pass1Extraction) -> str:
-    return extraction.model_dump_json(indent=2)
+    payload = {
+        "question": extraction.question,
+        "figures": [
+            {
+                "evidence_id": f"evidence_{index}",
+                "label": figure.label,
+                "value": figure.value,
+                "unit": figure.unit,
+                "period": figure.period,
+            }
+            for index, figure in enumerate(extraction.figures, start=1)
+        ],
+        "notes": extraction.notes,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def substitute(template: str, **values: str) -> str:

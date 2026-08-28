@@ -114,6 +114,11 @@ class BgeM3Embedder:
             raise ValueError("query must not be blank")
         return self.encode((query,))[0]
 
+    def release(self) -> None:
+        """Release the lazy model before GPU ownership returns to vLLM."""
+
+        self._model = None
+
     def _get_model(self) -> Any:
         if self._model is None:
             try:

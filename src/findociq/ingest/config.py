@@ -13,6 +13,7 @@ import yaml
 
 from findociq.ingest.chunker import ChunkerConfig
 from findociq.ingest.docling_parser import ParserConfig
+from findociq.ingest.gpu_lease import GpuLeaseConfig
 from findociq.ingest.router import RouterConfig
 from findociq.ingest.vlm_fallback import VisionConfig
 
@@ -23,6 +24,7 @@ class IngestionConfig:
     parser: ParserConfig
     vision: VisionConfig
     chunker: ChunkerConfig
+    gpu_lease: GpuLeaseConfig
     observability_config: Path
 
     @classmethod
@@ -37,6 +39,7 @@ class IngestionConfig:
             parser=ParserConfig(**cls._mapping(payload["parser"], "parser")),
             vision=VisionConfig(**cls._mapping(payload["vision"], "vision")),
             chunker=ChunkerConfig(**cls._mapping(payload["chunker"], "chunker")),
+            gpu_lease=GpuLeaseConfig(**cls._mapping(payload["gpu_lease"], "gpu_lease")),
             observability_config=(source.parent / payload["observability_config"]).resolve(),
         )
 
@@ -47,6 +50,7 @@ class IngestionConfig:
             "parser": asdict(self.parser),
             "vision": self.vision.model_dump(mode="json"),
             "chunker": asdict(self.chunker),
+            "gpu_lease": self.gpu_lease.model_dump(mode="json"),
             "observability_config_sha256": sha256(
                 self.observability_config.read_bytes()
             ).hexdigest(),
@@ -61,7 +65,14 @@ class IngestionConfig:
 
     @staticmethod
     def _require_sections(payload: dict[str, Any], source: Path) -> None:
-        expected = {"router", "parser", "vision", "chunker", "observability_config"}
+        expected = {
+            "router",
+            "parser",
+            "vision",
+            "chunker",
+            "gpu_lease",
+            "observability_config",
+        }
         actual = set(payload)
         if actual != expected:
             missing = sorted(expected - actual)

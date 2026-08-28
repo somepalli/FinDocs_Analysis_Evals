@@ -99,6 +99,15 @@ def answer_json() -> str:
     )
 
 
+def pass2_answer_json(*evidence_ids: str) -> str:
+    return json.dumps(
+        {
+            "answer": "Revenue was INR 1,240 crore in FY25.",
+            "evidence_ids": list(evidence_ids or ("evidence_1",)),
+        }
+    )
+
+
 def test_generation_config_is_local_deterministic_and_yaml_backed() -> None:
     config = GenerationConfig.from_yaml(ROOT / "configs/reasoning/gemma_vllm.yaml")
     assert config.backend == "vllm"
@@ -107,6 +116,7 @@ def test_generation_config_is_local_deterministic_and_yaml_backed() -> None:
     assert config.quantization == "awq-int4"
     assert config.temperature == 0.0
     assert config.seed == 17
+    assert config.timeout_seconds == 600
     fallback = GenerationConfig.from_yaml(ROOT / "configs/reasoning/gemma_ollama.yaml")
     assert fallback.backend == "ollama"
     assert fallback.model_id == "gemma3:4b"
@@ -149,7 +159,7 @@ def test_generation_factory_selects_concrete_serving_client() -> None:
 
 
 def test_two_pass_extracts_then_reasons_only_over_structured_json() -> None:
-    client = FakeClient(extraction_json(), answer_json())
+    client = FakeClient(extraction_json(), pass2_answer_json())
     recorder = InMemoryRecorder()
     pipeline = ReasoningPipeline(
         ReasoningPipelineConfig.from_yaml(ROOT / "configs/pipeline/two_pass.yaml"),
@@ -164,6 +174,8 @@ def test_two_pass_extracts_then_reasons_only_over_structured_json() -> None:
     assert "Revenue was INR 1,240" in client.prompts[0]
     assert "Revenue was INR 1,240" not in client.prompts[1]
     assert '"figures"' in client.prompts[1]
+    assert '"evidence_id": "evidence_1"' in client.prompts[1]
+    assert '"bbox"' not in client.prompts[1]
     assert client.stages == ["generation.pass1", "generation.pass2"]
     assert {event.stage for event in recorder.events} == {
         "reasoning.total",
@@ -171,6 +183,43 @@ def test_two_pass_extracts_then_reasons_only_over_structured_json() -> None:
         "reasoning.pass2",
         "citation_validation",
     }
+
+
+def test_pass2_retries_unknown_id_and_resolves_canonical_citation() -> None:
+    client = FakeClient(
+        extraction_json(),
+        pass2_answer_json("invented_evidence"),
+        pass2_answer_json("evidence_1", "evidence_1"),
+    )
+    pipeline = ReasoningPipeline(
+        ReasoningPipelineConfig.from_yaml(ROOT / "configs/pipeline/two_pass.yaml"),
+        client,
+    )
+
+    result = pipeline.run("What was revenue?", (retrieval_hit(),))
+
+    assert result.answer.citations == (citation(),)
+    assert client.stages == [
+        "generation.pass1",
+        "generation.pass2",
+        "generation.pass2.retry",
+    ]
+    assert "invented_evidence" in client.prompts[2]
+
+
+def test_pass2_fails_closed_when_retry_still_selects_unknown_id() -> None:
+    client = FakeClient(
+        extraction_json(),
+        pass2_answer_json("unknown_1"),
+        pass2_answer_json("unknown_2"),
+    )
+    pipeline = ReasoningPipeline(
+        ReasoningPipelineConfig.from_yaml(ROOT / "configs/pipeline/two_pass.yaml"),
+        client,
+    )
+
+    with pytest.raises(ValueError, match="invalid evidence selection after retry"):
+        pipeline.run("What was revenue?", (retrieval_hit(),))
 
 
 def test_single_pass_has_no_intermediate_extraction() -> None:
@@ -249,6 +298,95 @@ def test_pass1_repairs_only_uniquely_grounded_schema_omissions() -> None:
         )
 
 
+def test_pass1_repairs_model_bbox_only_when_value_has_unique_evidence() -> None:
+    mismatched = json.loads(extraction_json())
+    mismatched["figures"][0]["citation"]["bbox"] = {
+        "x0": 0,
+        "y0": 0,
+        "x1": 1,
+        "y1": 1,
+    }
+
+    extraction = Pass1Extractor(FakeClient(json.dumps(mismatched))).extract(
+        "What was revenue?", (retrieval_hit(),)
+    )
+
+    assert extraction.figures[0].citation == citation()
+
+
+def test_pass1_uses_proposed_page_to_disambiguate_repeated_value() -> None:
+    duplicate = retrieval_hit().model_copy(
+        update={
+            "chunk": retrieval_hit().chunk.model_copy(
+                update={
+                    "chunk_id": "chunk-2",
+                    "provenance": (
+                        retrieval_hit().chunk.provenance[0].model_copy(
+                            update={"page_number": 3}
+                        ),
+                    ),
+                }
+            )
+        }
+    )
+    mismatched = json.loads(extraction_json())
+    mismatched["figures"][0]["citation"]["bbox"] = {
+        "x0": 0,
+        "y0": 0,
+        "x1": 1,
+        "y1": 1,
+    }
+
+    extraction = Pass1Extractor(FakeClient(json.dumps(mismatched))).extract(
+        "What was revenue?", (retrieval_hit(), duplicate)
+    )
+
+    assert extraction.figures[0].citation == citation()
+
+
+def test_pass1_uses_overlapping_bbox_to_disambiguate_same_page() -> None:
+    other_provenance = retrieval_hit().chunk.provenance[0].model_copy(
+        update={"bbox": BoundingBox(x0=200, y0=200, x1=300, y1=240)}
+    )
+    duplicate = retrieval_hit().model_copy(
+        update={
+            "chunk": retrieval_hit().chunk.model_copy(
+                update={"chunk_id": "chunk-2", "provenance": (other_provenance,)}
+            )
+        }
+    )
+    approximate = json.loads(extraction_json())
+    approximate["figures"][0]["citation"]["bbox"] = {
+        "x0": 9,
+        "y0": 19,
+        "x1": 101,
+        "y1": 41,
+    }
+
+    extraction = Pass1Extractor(FakeClient(json.dumps(approximate))).extract(
+        "What was revenue?", (retrieval_hit(), duplicate)
+    )
+
+    assert extraction.figures[0].citation == citation()
+
+
+def test_pass1_canonicalizes_unique_page_when_value_is_normalized() -> None:
+    normalized = json.loads(extraction_json())
+    normalized["figures"][0]["value"] = "1.24 thousand"
+    normalized["figures"][0]["citation"]["bbox"] = {
+        "x0": 0,
+        "y0": 0,
+        "x1": 1,
+        "y1": 1,
+    }
+
+    extraction = Pass1Extractor(FakeClient(json.dumps(normalized))).extract(
+        "What was revenue?", (retrieval_hit(),)
+    )
+
+    assert extraction.figures[0].citation == citation()
+
+
 def test_pipeline_rejects_empty_evidence_before_model_call() -> None:
     client = FakeClient(answer_json())
     pipeline = ReasoningPipeline(ReasoningPipelineConfig(name="single_pass", passes=1), client)
@@ -284,7 +422,7 @@ def test_live_reasoning_scores_both_modes_and_records_model_revision() -> None:
         ),
         retrieval_pipeline=FakeRetrievalPipeline(),  # type: ignore[arg-type]
         retrieval_strategy="hybrid_rerank",
-        generation_client=FakeClient(answer_json(), extraction_json(), answer_json()),
+        generation_client=FakeClient(answer_json(), extraction_json(), pass2_answer_json()),
         generation_config=config,
         generation_config_path=ROOT / "configs/reasoning/gemma_local.yaml",
         reasoning_config_dir=ROOT / "configs/pipeline",
