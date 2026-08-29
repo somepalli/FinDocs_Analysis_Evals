@@ -77,6 +77,7 @@ class FinDocIQService:
         mode: ReasoningMode,
         question_id: str | None = None,
         document_ids: tuple[str, ...] = (),
+        application_id: str | None = None,
     ) -> ReasoningRun:
         if mode not in self.reasoning:
             raise ValueError(f"unsupported reasoning mode: {mode}")
@@ -87,7 +88,10 @@ class FinDocIQService:
         )
         with self.observer.span(context, "api.query", {"mode": mode}):
             hits = self.retrieval.retrieve(
-                question, trace_context=context, document_ids=document_ids
+                question,
+                trace_context=context,
+                document_ids=document_ids,
+                application_id=application_id,
             )
             return self.reasoning[mode].run(question, hits, trace_context=context)
 

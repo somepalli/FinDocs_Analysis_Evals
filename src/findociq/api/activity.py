@@ -20,17 +20,25 @@ class IngestionActivityRegistry:
         self._events: dict[str, list[IngestionActivityEvent]] = {}
         self._statuses: dict[str, ActivityStatus] = {}
         self._sequences: dict[str, int] = {}
+        self._applications: dict[str, str] = {}
 
-    def start(self, batch_id: str) -> None:
+    def start(self, batch_id: str, application_id: str | None = None) -> None:
         with self._lock:
             if batch_id not in self._events and len(self._events) >= self.max_batches:
                 oldest = next(iter(self._events))
                 self._events.pop(oldest, None)
                 self._statuses.pop(oldest, None)
                 self._sequences.pop(oldest, None)
+                self._applications.pop(oldest, None)
             self._events[batch_id] = []
             self._statuses[batch_id] = "running"
             self._sequences[batch_id] = 0
+            if application_id:
+                self._applications[batch_id] = application_id
+
+    def application_id(self, batch_id: str) -> str | None:
+        with self._lock:
+            return self._applications.get(batch_id)
 
     def report(self, batch_id: str, stage: str, message: str, **details: object) -> None:
         with self._lock:

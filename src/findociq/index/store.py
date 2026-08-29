@@ -44,7 +44,8 @@ class RetrievalStore(Protocol):
     def upsert(self, records: Sequence[IndexRecord]) -> None: ...
 
     def dense_search(
-        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = ()
+        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = (),
+        application_id: str | None = None,
     ) -> tuple[RetrievalHit, ...]: ...
 
     def hybrid_search(
@@ -54,6 +55,7 @@ class RetrievalStore(Protocol):
         prefetch_limit: int,
         rrf_k: int,
         document_ids: tuple[str, ...] = (),
+        application_id: str | None = None,
     ) -> tuple[RetrievalHit, ...]: ...
 
 
@@ -101,8 +103,26 @@ class QdrantStore:
         ]
         client.upsert(collection_name=self.config.collection, points=points, wait=True)
 
+    def delete_application(self, application_id: str) -> None:
+        client, models = self._dependencies()
+        client.delete(
+            collection_name=self.config.collection,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="chunk.metadata.application_id",
+                            match=models.MatchValue(value=application_id),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
+
     def dense_search(
-        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = ()
+        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = (),
+        application_id: str | None = None,
     ) -> tuple[RetrievalHit, ...]:
         client, models = self._dependencies()
         response = client.query_points(
@@ -111,7 +131,7 @@ class QdrantStore:
             using=self.config.dense_vector_name,
             limit=limit,
             with_payload=True,
-            query_filter=self._document_filter(models, document_ids),
+            query_filter=self._document_filter(models, document_ids, application_id),
         )
         return self._hits(response.points, "dense")
 
@@ -122,6 +142,7 @@ class QdrantStore:
         prefetch_limit: int,
         rrf_k: int,
         document_ids: tuple[str, ...] = (),
+        application_id: str | None = None,
     ) -> tuple[RetrievalHit, ...]:
         client, models = self._dependencies()
         response = client.query_points(
@@ -144,22 +165,32 @@ class QdrantStore:
             query=models.RrfQuery(rrf=models.Rrf(k=rrf_k)),
             limit=limit,
             with_payload=True,
-            query_filter=self._document_filter(models, document_ids),
+            query_filter=self._document_filter(models, document_ids, application_id),
         )
         return self._hits(response.points, "hybrid_rrf")
 
     @staticmethod
-    def _document_filter(models: Any, document_ids: tuple[str, ...]) -> Any | None:
-        if not document_ids:
+    def _document_filter(
+        models: Any, document_ids: tuple[str, ...], application_id: str | None = None
+    ) -> Any | None:
+        if not document_ids and not application_id:
             return None
-        return models.Filter(
-            must=[
+        conditions = []
+        if document_ids:
+            conditions.append(
                 models.FieldCondition(
                     key="chunk.provenance[].document_id",
                     match=models.MatchAny(any=list(document_ids)),
                 )
-            ]
-        )
+            )
+        if application_id:
+            conditions.append(
+                models.FieldCondition(
+                    key="chunk.metadata.application_id",
+                    match=models.MatchValue(value=application_id),
+                )
+            )
+        return models.Filter(must=conditions)
 
     def _dependencies(self) -> tuple[Any, Any]:
         try:

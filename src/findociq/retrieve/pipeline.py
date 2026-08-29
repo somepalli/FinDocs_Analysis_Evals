@@ -101,6 +101,7 @@ class RetrievalPipeline:
         *,
         trace_context: TraceContext | None = None,
         document_ids: tuple[str, ...] = (),
+        application_id: str | None = None,
     ) -> tuple[RetrievalHit, ...]:
         if not query.strip():
             raise ValueError("query must not be blank")
@@ -112,7 +113,7 @@ class RetrievalPipeline:
             "retrieval.total",
             {"strategy": self.config.name, "mode": self.config.mode},
         ) as total_attributes:
-            cache_key = f"{query}\0{'|'.join(document_ids)}"
+            cache_key = f"{query}\0{application_id or ''}\0{'|'.join(document_ids)}"
             cached = self._cache.get(cache_key)
             total_attributes["cache_hit"] = cached is not None
             if cached is not None:
@@ -126,12 +127,13 @@ class RetrievalPipeline:
                 {"mode": self.config.mode, "requested_hits": self.config.retrieve_top_k},
             ) as search_attributes:
                 if self.config.mode == "dense":
-                    hits = (
-                        self.store.dense_search(
-                            embedding, self.config.retrieve_top_k, document_ids
-                        )
-                        if document_ids
-                        else self.store.dense_search(embedding, self.config.retrieve_top_k)
+                    search_options = {}
+                    if document_ids:
+                        search_options["document_ids"] = document_ids
+                    if application_id:
+                        search_options["application_id"] = application_id
+                    hits = self.store.dense_search(
+                        embedding, self.config.retrieve_top_k, **search_options
                     )
                 else:
                     search_options = dict(
@@ -141,6 +143,8 @@ class RetrievalPipeline:
                     )
                     if document_ids:
                         search_options["document_ids"] = document_ids
+                    if application_id:
+                        search_options["application_id"] = application_id
                     hits = self.store.hybrid_search(embedding, **search_options)
                 search_attributes["hit_count"] = len(hits)
             if self.reranker is None or self.config.rerank_top_k is None:

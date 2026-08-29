@@ -6,6 +6,7 @@ import base64
 import hashlib
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from findociq.observability.schema import LangfuseOtlpConfig, SpanEvent
@@ -23,8 +24,8 @@ class LangfuseOtlpRecorder:
         if self._tracer is not None:
             return
         config = self.config
-        public_key = os.environ.get(config.public_key_env)
-        secret_key = os.environ.get(config.secret_key_env)
+        public_key = _credential(config.public_key_env)
+        secret_key = _credential(config.secret_key_env)
         if not public_key or not secret_key:
             raise RuntimeError(
                 f"Langfuse requires {config.public_key_env} and {config.secret_key_env}"
@@ -106,3 +107,10 @@ class LangfuseOtlpRecorder:
 
 def _nonzero_hash(value: str, hex_characters: int) -> int:
     return int(hashlib.sha256(value.encode()).hexdigest()[:hex_characters], 16) or 1
+
+
+def _credential(name: str) -> str | None:
+    path = os.environ.get(f"{name}_FILE")
+    if path:
+        return Path(path).read_text(encoding="utf-8").strip()
+    return os.environ.get(name)

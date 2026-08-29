@@ -16,4 +16,5 @@ spot-checks/
 .artifacts/
 .uv-cache*/
 .pytest-tmp*/
+.phase8-postgres/
 AGENTS.md

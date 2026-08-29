@@ -149,8 +149,8 @@ def build_observer(config: ObservabilityConfig, *, reset: bool = False) -> Trace
     if (
         langfuse is not None
         and langfuse.enabled
-        and os.environ.get(langfuse.public_key_env)
-        and os.environ.get(langfuse.secret_key_env)
+        and _credential_available(langfuse.public_key_env)
+        and _credential_available(langfuse.secret_key_env)
     ):
         from findociq.observability.langfuse import LangfuseOtlpRecorder
 
@@ -159,6 +159,10 @@ def build_observer(config: ObservabilityConfig, *, reset: bool = False) -> Trace
         recorders[0] if len(recorders) == 1 else CompositeRecorder(*recorders)
     )
     return TraceObserver(recorder)
+
+
+def _credential_available(name: str) -> bool:
+    return bool(os.environ.get(name) or os.environ.get(f"{name}_FILE"))
 
 
 def load_trace_events(path: str | Path) -> tuple[SpanEvent, ...]:

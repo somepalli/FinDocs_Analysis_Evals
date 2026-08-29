@@ -390,6 +390,36 @@ with structured figures and a `(document_id, page_number, bbox)` citation on
 every figure. Downstream repositories must copy this public response schema and
 call it over HTTP; they must not import `findociq` internals.
 
+## Production document-security profile
+
+Set `FINDOCIQ_PRODUCTION_GUARDRAILS_ENABLED=true` to replace the development endpoints
+with application-scoped contract `2.0`. In this profile, `/v1/query` returns 404 and
+ingestion, activity, extraction, and retention deletion require a five-minute service
+JWT with the correct audience, role, application scope, one-time `jti`, and correlation
+ID. Extraction accepts allow-listed `metric_ids`; arbitrary production questions are
+not accepted.
+
+Every PDF is staged in container `tmpfs`, checked by pinned ClamAV, and rejected for
+malware, malformed/encrypted structure, JavaScript, launch/open actions, embedded
+files, remote links, forms, or other active content before GPU acquisition. Parsed
+text is treated as untrusted evidence and locally redacted for Aadhaar, PAN, accounts,
+IFSC, phone, email, tax identifiers, credentials, and secrets before BGE-M3/Qdrant.
+Qdrant payloads carry `application_id`, and production retrieval requires both the
+application and its owned document IDs.
+
+Raw PDFs and quarantine objects use AES-256-GCM envelope encryption with a per-object
+data key. The master key is read from `FINDOCIQ_DOCUMENT_MASTER_KEY_FILE`; plaintext is
+materialized only in the container's temporary filesystem and removed after parsing.
+`findociq-rotate-document-keys` rewraps data keys under a new versioned master key
+without rewriting PDF ciphertext. Scan, DLP, storage, ownership, and deletion receipts
+contain hashes, counts, versions, and safe disposition codes—never matched PII.
+
+Run `findociq-migrate-security` before starting production. The shared policy in
+`configs/guardrails/production.yaml` is typed and hashed, and `/healthz` reports its
+identity so FunderMatch can fail readiness on policy drift. Production Docker exposes
+no FinDocIQ host port; only the FunderMatch TLS proxy is public. The development token
+and localhost HTTP workflow remain available only when production guardrails are off.
+
 ## Provenance contract
 
 Every chunk contains one or more provenance objects with a document ID,

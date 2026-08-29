@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from findociq.reason.schema import ExtractedFigure, SourceCitation
 from findociq.service import ReasoningMode
@@ -38,21 +38,44 @@ class ExtractRequest(BaseModel):
     document_ids: tuple[str, ...] = Field(default=(), max_length=20)
 
 
+class ProductionExtractRequest(BaseModel):
+    """Application-scoped production extraction contract."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    contract_version: Literal["2.0"] = "2.0"
+    application_id: str = Field(min_length=3, max_length=200)
+    document_ids: tuple[str, ...] = Field(min_length=1, max_length=20)
+    metric_ids: tuple[str, ...] = Field(min_length=1, max_length=20)
+    command_id: str = Field(min_length=8, max_length=200)
+
+
 class IngestDocumentRequest(BaseModel):
     """Versioned PDF upload contract for trusted local pipeline callers."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    contract_version: Literal["1.0"] = "1.0"
+    contract_version: Literal["1.0", "2.0"] = "1.0"
     filename: str = Field(min_length=5, max_length=240, pattern=r"^[^/\\]+\.[Pp][Dd][Ff]$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     content_base64: str = Field(min_length=8)
+    application_id: str | None = Field(default=None, min_length=3, max_length=200)
+    command_id: str | None = Field(default=None, min_length=8, max_length=200)
+    policy_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def require_v2_scope(self) -> IngestDocumentRequest:
+        if self.contract_version == "2.0" and not all(
+            (self.application_id, self.command_id, self.policy_hash)
+        ):
+            raise ValueError("v2 ingestion requires application_id, command_id, and policy_hash")
+        return self
 
 
 class IngestDocumentResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    contract_version: Literal["1.0"] = "1.0"
+    contract_version: Literal["1.0", "2.0"] = "1.0"
     document_id: str
     filename: str
     sha256: str
@@ -60,6 +83,13 @@ class IngestDocumentResponse(BaseModel):
     chunk_count: int = Field(ge=1)
     chunk_ids: tuple[str, ...] = Field(min_length=1)
     config_hash: str
+    application_id: str | None = None
+    policy_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    scan_status: str | None = None
+    scan_receipt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    dlp_receipt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    storage_receipt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    ownership_receipt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class IngestBatchRequest(BaseModel):
@@ -67,17 +97,27 @@ class IngestBatchRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    contract_version: Literal["1.0"] = "1.0"
+    contract_version: Literal["1.0", "2.0"] = "1.0"
     batch_id: str | None = Field(
         default=None, min_length=3, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]+$"
     )
     documents: tuple[IngestDocumentRequest, ...] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def consistent_contract(self) -> IngestBatchRequest:
+        if any(item.contract_version != self.contract_version for item in self.documents):
+            raise ValueError("batch and document contract versions must match")
+        if self.contract_version == "2.0":
+            applications = {item.application_id for item in self.documents}
+            if len(applications) != 1:
+                raise ValueError("production batch must belong to one application")
+        return self
+
 
 class IngestBatchResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    contract_version: Literal["1.0"] = "1.0"
+    contract_version: Literal["1.0", "2.0"] = "1.0"
     documents: tuple[IngestDocumentResponse, ...] = Field(min_length=1)
 
 
@@ -112,10 +152,13 @@ class ExtractResponse(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    contract_version: Literal["1.0"] = "1.0"
+    contract_version: Literal["1.0", "2.0"] = "1.0"
     question: str
     figures: tuple[ExtractedFigure, ...] = Field(min_length=1)
     notes: tuple[str, ...] = ()
+    application_id: str | None = None
+    command_id: str | None = None
+    policy_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class HealthResponse(BaseModel):
@@ -123,3 +166,21 @@ class HealthResponse(BaseModel):
 
     status: str = "ok"
     service: str = "findociq"
+    policy_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class RetentionDeleteRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    contract_version: Literal["2.0"] = "2.0"
+    command_id: str = Field(min_length=8, max_length=200)
+
+
+class RetentionDeleteResponse(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    contract_version: Literal["2.0"] = "2.0"
+    application_id: str
+    deleted_document_ids: tuple[str, ...]
+    receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
