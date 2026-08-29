@@ -210,7 +210,11 @@ Observability is typed and fans every immutable structural span to local JSONL
 and, when enabled, the self-hosted Langfuse OTLP endpoint. Embedding, search,
 reranking, text generation, vision generation, reasoning passes, API requests,
 and citation validation are spanned. Raw questions, prompts, answers, images,
-and document text are never written; traces carry hashes, model revisions,
+and document text are never written. Generation spans carry the prompt template
+ID, its content-derived version and SHA-256, model revision, configuration hash,
+and evaluation dataset hash so prompt changes remain attributable without
+capturing rendered borrower content. The evaluation configuration hash covers
+single-pass, both two-pass templates, and the two-pass retry template. Traces also carry
 counts, durations, and exception types.
 
 FinDocIQ reuses an existing self-hosted Langfuse instance instead of starting

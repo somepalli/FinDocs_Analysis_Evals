@@ -619,7 +619,11 @@ def _reasoning_prompt_paths(mode: str) -> tuple[Path, ...]:
     if mode == "single_pass":
         return (prompt_dir / "single_pass_reason.txt",)
     if mode == "two_pass":
-        return (prompt_dir / "pass1_extract.txt", prompt_dir / "pass2_reason.txt")
+        return (
+            prompt_dir / "pass1_extract.txt",
+            prompt_dir / "pass2_reason.txt",
+            prompt_dir / "pass2_retry.txt",
+        )
     raise ValueError(f"unsupported reasoning mode: {mode}")
 
 

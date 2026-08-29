@@ -36,15 +36,20 @@ class Pass1Extractor:
             raise ValueError("question must not be blank")
         if not hits:
             raise ValueError("pass 1 requires at least one retrieved evidence chunk")
+        context = trace_context or TraceContext.for_query(question, operation="reasoning:pass1")
+        template = load_prompt("pass1_extract.txt")
         prompt = substitute(
-            load_prompt("pass1_extract.txt"),
+            template,
             QUESTION=question,
             EVIDENCE=render_evidence(hits),
         )
-        raw = self.client.complete(prompt, trace_context=trace_context, stage="generation.pass1")
+        raw = self.client.complete(
+            prompt,
+            trace_context=context.with_prompt("pass1_extract", template),
+            stage="generation.pass1",
+        )
         payload = _repair_grounded_output(_parse_json(raw), question, hits)
         extraction = Pass1Extraction.model_validate(payload)
-        context = trace_context or TraceContext.for_query(question, operation="reasoning:pass1")
         with self.observer.span(
             context,
             "citation_validation",

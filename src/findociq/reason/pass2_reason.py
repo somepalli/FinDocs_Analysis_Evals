@@ -29,14 +29,18 @@ class Pass2Reasoner:
     ) -> ReasonedAnswer:
         if not question.strip():
             raise ValueError("question must not be blank")
+        context = trace_context or TraceContext.for_query(question, operation="reasoning:pass2")
         rendered_extraction = render_extraction(extraction)
+        template = load_prompt("pass2_reason.txt")
         prompt = substitute(
-            load_prompt("pass2_reason.txt"),
+            template,
             QUESTION=question,
             EXTRACTION=rendered_extraction,
         )
         raw = self.client.complete(
-            prompt, trace_context=trace_context, stage="generation.pass2"
+            prompt,
+            trace_context=context.with_prompt("pass2_reason", template),
+            stage="generation.pass2",
         )
         allowed = {
             f"evidence_{index}": figure.citation
@@ -47,8 +51,9 @@ class Pass2Reasoner:
         try:
             selection = self._validate_selection(raw, allowed)
         except ValueError as first_error:
+            retry_template = load_prompt("pass2_retry.txt")
             retry_prompt = substitute(
-                load_prompt("pass2_retry.txt"),
+                retry_template,
                 QUESTION=question,
                 EXTRACTION=rendered_extraction,
                 INVALID_RESPONSE=raw,
@@ -56,7 +61,7 @@ class Pass2Reasoner:
             )
             retry_raw = self.client.complete(
                 retry_prompt,
-                trace_context=trace_context,
+                trace_context=context.with_prompt("pass2_retry", retry_template),
                 stage="generation.pass2.retry",
             )
             try:
@@ -65,7 +70,6 @@ class Pass2Reasoner:
                 raise ValueError(
                     "pass 2 returned an invalid evidence selection after retry"
                 ) from retry_error
-        context = trace_context or TraceContext.for_query(question, operation="reasoning:pass2")
         with self.observer.span(
             context,
             "citation_validation",

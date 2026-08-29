@@ -69,6 +69,9 @@ class TraceContext(BaseModel):
     question_id: str | None = None
     config_hash: str | None = None
     dataset_sha256: str | None = None
+    prompt_template_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_.-]{0,119}$")
+    prompt_version: str | None = Field(default=None, pattern=r"^[0-9a-f]{12}$")
+    prompt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @classmethod
     def for_query(
@@ -95,6 +98,20 @@ class TraceContext(BaseModel):
             dataset_sha256=dataset_sha256,
         )
 
+    def with_prompt(self, template_id: str, template: str) -> TraceContext:
+        """Attach content-addressed prompt identity without retaining prompt content."""
+        if not template.strip():
+            raise ValueError("prompt template must not be blank")
+        digest = hashlib.sha256(template.encode("utf-8")).hexdigest()
+        return type(self).model_validate(
+            {
+                **self.model_dump(),
+                "prompt_template_id": template_id,
+                "prompt_version": digest[:12],
+                "prompt_sha256": digest,
+            }
+        )
+
 
 class SpanEvent(BaseModel):
     """One timed pipeline stage without raw prompt or document content."""
@@ -107,6 +124,9 @@ class SpanEvent(BaseModel):
     question_id: str | None = None
     config_hash: str | None = None
     dataset_sha256: str | None = None
+    prompt_template_id: str | None = None
+    prompt_version: str | None = None
+    prompt_sha256: str | None = None
     stage: str
     status: Literal["success", "error"]
     duration_ms: float = Field(ge=0)

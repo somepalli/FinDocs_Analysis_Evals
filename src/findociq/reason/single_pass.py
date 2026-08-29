@@ -27,15 +27,20 @@ class SinglePassReasoner:
             raise ValueError("question must not be blank")
         if not hits:
             raise ValueError("single-pass reasoning requires retrieved evidence")
+        context = trace_context or TraceContext.for_query(
+            question, operation="reasoning:single_pass"
+        )
+        template = load_prompt("single_pass_reason.txt")
+        prompt_context = context.with_prompt("single_pass_reason", template)
         answer = ReasonedAnswer.model_validate(
             _parse_json(
                 self.client.complete(
                     substitute(
-                        load_prompt("single_pass_reason.txt"),
+                        template,
                         QUESTION=question,
                         EVIDENCE=render_evidence(hits),
                     ),
-                    trace_context=trace_context,
+                    trace_context=prompt_context,
                     stage="generation.single_pass",
                 )
             )
@@ -44,9 +49,6 @@ class SinglePassReasoner:
             citation_from_provenance(provenance)
             for hit in hits
             for provenance in hit.chunk.provenance
-        )
-        context = trace_context or TraceContext.for_query(
-            question, operation="reasoning:single_pass"
         )
         with self.observer.span(
             context,

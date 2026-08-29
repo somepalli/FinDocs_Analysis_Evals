@@ -85,6 +85,9 @@ class LangfuseOtlpRecorder:
             ("findociq.question_id", event.question_id),
             ("findociq.config_hash", event.config_hash),
             ("findociq.dataset_sha256", event.dataset_sha256),
+            ("findociq.prompt_template_id", event.prompt_template_id),
+            ("findociq.prompt_version", event.prompt_version),
+            ("findociq.prompt_sha256", event.prompt_sha256),
             ("findociq.error_type", event.error_type),
         ):
             if value is not None:

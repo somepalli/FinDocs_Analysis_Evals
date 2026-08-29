@@ -57,6 +57,11 @@ def test_observability_config_is_typed_and_content_safe() -> None:
     assert "What was revenue?" not in serialized
     assert len(trace_context.query_sha256) == 64
     assert trace_context.run_id == context().run_id
+    identified = trace_context.with_prompt("pass1_extract", "Return typed JSON only.")
+    identified_json = identified.model_dump_json()
+    assert identified.prompt_template_id == "pass1_extract"
+    assert identified.prompt_version == identified.prompt_sha256[:12]
+    assert "Return typed JSON only." not in identified_json
     langfuse = ObservabilityConfig.from_yaml(ROOT / "configs/observability/langfuse.yaml")
     assert langfuse.langfuse is not None
     assert langfuse.langfuse.enabled is True
