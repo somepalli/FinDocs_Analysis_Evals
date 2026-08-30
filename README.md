@@ -401,7 +401,9 @@ with application-scoped contract `2.0`. In this profile, `/v1/query` returns 404
 ingestion, activity, extraction, and retention deletion require a five-minute service
 JWT with the correct audience, role, application scope, one-time `jti`, and correlation
 ID. Extraction accepts allow-listed `metric_ids`; arbitrary production questions are
-not accepted.
+not accepted. The FunderMatch production set covers revenue, EBITDA margin, PAT, DSCR,
+debt-to-equity, debt-to-EBITDA, collateral cover, operating years, employee count,
+legal borrower name, industry, sub-industry, and Indian operating region.
 
 The producer-owned v1/v2 Pydantic schemas are exported to
 `contracts/findociq-public-http-contract.json`. CI verifies that snapshot against the
