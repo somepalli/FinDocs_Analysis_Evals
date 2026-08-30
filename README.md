@@ -430,6 +430,16 @@ identity so FunderMatch can fail readiness on policy drift. Production Docker ex
 no FinDocIQ host port; only the FunderMatch TLS proxy is public. The development token
 and localhost HTTP workflow remain available only when production guardrails are off.
 
+For an independent deployment rather than the integrated FunderMatch Compose stack,
+provision the FinDocIQ service-JWT key as one half of a coordinated service identity.
+Use FunderMatch's `fundermatch-service-identity provision` command to create distinct
+deployment copies containing the same high-entropy value, install the FinDocIQ copy
+through its secret manager as `FINDOCIQ_SERVICE_JWT_SECRET_FILE`, and run
+`fundermatch-service-identity verify` against both installed copies and both production
+policy bundles before startup. Rotate both deployments together from new versioned
+secret paths during an offline maintenance window; never overwrite or rotate only the
+FinDocIQ copy.
+
 ## Provenance contract
 
 Every chunk contains one or more provenance objects with a document ID,

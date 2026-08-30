@@ -30,3 +30,11 @@ jobs:
           uv run --frozen --no-sync python
           external/FunderMatch/scripts/validate_findociq_contract.py
           --contract contracts/findociq-public-http-contract.json
+      - name: Validate shared production service identity policy
+        env:
+          PYTHONPATH: external/FunderMatch/src
+        run: >-
+          uv run --frozen --no-sync python -m fundermatch.security.service_identity
+          verify-policy
+          --fundermatch-policy external/FunderMatch/configs/guardrails/production.yaml
+          --findociq-policy configs/guardrails/production.yaml
