@@ -403,6 +403,12 @@ JWT with the correct audience, role, application scope, one-time `jti`, and corr
 ID. Extraction accepts allow-listed `metric_ids`; arbitrary production questions are
 not accepted.
 
+The producer-owned v1/v2 Pydantic schemas are exported to
+`contracts/findociq-public-http-contract.json`. CI verifies that snapshot against the
+current FinDocIQ models and checks FunderMatch's independent HTTP consumer models against
+the same bundle. This catches cross-repository drift without allowing an internal package
+import across the service boundary.
+
 Every PDF is staged in container `tmpfs`, checked by pinned ClamAV, and rejected for
 malware, malformed/encrypted structure, JavaScript, launch/open actions, embedded
 files, remote links, forms, or other active content before GPU acquisition. Parsed
