@@ -413,8 +413,12 @@ import across the service boundary.
 
 Every PDF is staged in container `tmpfs`, checked by pinned ClamAV, and rejected for
 malware, malformed/encrypted structure, JavaScript, launch/open actions, embedded
-files, remote links, forms, or other active content before GPU acquisition. Parsed
-text is treated as untrusted evidence and locally redacted for Aadhaar, PAN, accounts,
+files, remote links, forms, or other active content before GPU acquisition. The
+production Docker profile uses CPU Docling and disables raw-page Gemma vision, so an
+unredacted page cannot cross into vLLM. Scanned PDFs continue through Docling OCR; a
+page that would require Gemma fallback fails closed until a pre-model image-redaction
+stage is available. Parsed text is treated as untrusted evidence and locally redacted
+for Aadhaar, PAN, accounts,
 IFSC, phone, email, tax identifiers, credentials, and secrets before BGE-M3/Qdrant.
 Qdrant payloads carry `application_id`, and production retrieval requires both the
 application and its owned document IDs.

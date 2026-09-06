@@ -4,3 +4,4 @@ retrieve_top_k: 50
 rerank_top_k: 8
 prefetch_top_k: 50
 rrf_k: 60
+cache_max_entries: 256

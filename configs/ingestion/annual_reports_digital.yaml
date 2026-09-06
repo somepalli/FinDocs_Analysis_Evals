@@ -22,6 +22,7 @@ vision:
 chunker:
   max_text_characters: 1800
   overlap_characters: 180
+  max_table_characters: 50000
 gpu_lease:
   enabled: false
   base_url: http://127.0.0.1:8900

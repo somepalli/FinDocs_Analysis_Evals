@@ -89,7 +89,7 @@ class QdrantStore:
         client, models = self._dependencies()
         points = [
             models.PointStruct(
-                id=str(uuid5(NAMESPACE_URL, record.chunk.chunk_id)),
+                id=self.point_id(record.chunk),
                 vector={
                     self.config.dense_vector_name: list(record.embedding.dense),
                     self.config.sparse_vector_name: models.SparseVector(
@@ -102,6 +102,18 @@ class QdrantStore:
             for record in records
         ]
         client.upsert(collection_name=self.config.collection, points=points, wait=True)
+
+    @staticmethod
+    def point_id(chunk: TextChunk | TableChunk) -> str:
+        """Keep identical document chunks isolated between applications."""
+
+        application_id = chunk.metadata.get("application_id")
+        identity = (
+            f"{application_id}:{chunk.chunk_id}"
+            if isinstance(application_id, str) and application_id
+            else chunk.chunk_id
+        )
+        return str(uuid5(NAMESPACE_URL, identity))
 
     def delete_application(self, application_id: str) -> None:
         client, models = self._dependencies()

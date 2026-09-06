@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import Iterator, Mapping
@@ -20,6 +21,7 @@ from findociq.observability.schema import (
 )
 
 SPAN_ADAPTER = TypeAdapter(SpanEvent)
+LOGGER = logging.getLogger(__name__)
 
 
 class Clock(Protocol):
@@ -69,7 +71,10 @@ class CompositeRecorder:
 
     def record(self, event: SpanEvent) -> None:
         for recorder in self.recorders:
-            recorder.record(event)
+            try:
+                recorder.record(event)
+            except Exception:
+                LOGGER.warning("observability sink unavailable")
 
 
 class JsonlRecorder:
@@ -128,23 +133,30 @@ class TraceObserver:
         error_type: str | None,
     ) -> None:
         duration_ms = max(0.0, (self.clock.now_ns() - started_ns) / 1_000_000)
-        self.recorder.record(
-            SpanEvent(
+        try:
+            self.recorder.record(
+                SpanEvent(
                 **context.model_dump(),
                 stage=stage,
                 status=status,
                 duration_ms=duration_ms,
                 attributes=attributes,
                 error_type=error_type,
+                )
             )
-        )
+        except Exception:
+            LOGGER.warning("observability recording unavailable")
 
 
 def build_observer(config: ObservabilityConfig, *, reset: bool = False) -> TraceObserver:
     """Construct content-safe JSONL and optional Langfuse trace exporters."""
     if not config.enabled:
         return TraceObserver()
-    recorders: list[TraceRecorder] = [JsonlRecorder(config.trace_path, reset=reset)]
+    recorders: list[TraceRecorder] = []
+    try:
+        recorders.append(JsonlRecorder(config.trace_path, reset=reset))
+    except Exception:
+        LOGGER.warning("JSONL observability unavailable")
     langfuse = config.langfuse
     if (
         langfuse is not None
@@ -154,7 +166,12 @@ def build_observer(config: ObservabilityConfig, *, reset: bool = False) -> Trace
     ):
         from findociq.observability.langfuse import LangfuseOtlpRecorder
 
-        recorders.append(LangfuseOtlpRecorder(langfuse))
+        try:
+            recorders.append(LangfuseOtlpRecorder(langfuse))
+        except Exception:
+            LOGGER.warning("Langfuse observability unavailable")
+    if not recorders:
+        return TraceObserver()
     recorder: TraceRecorder = (
         recorders[0] if len(recorders) == 1 else CompositeRecorder(*recorders)
     )

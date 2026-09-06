@@ -40,10 +40,17 @@ dlp:
     - credential
   instruction_patterns:
     - "ignore (all|any|the|previous) instructions"
+    - "disregard (all|any|the|everything|previous|above)"
+    - "follow (only )?(this|these|my|the) (instruction|instructions|directive|directives)"
+    - "override (the )?(system|developer|previous|security|policy)"
+    - "forget (all|any|the|everything|previous|above)"
     - "system prompt"
     - "call (the )?tool"
     - "approve (this|the) (loan|application)"
     - "reject (this|the) (loan|application)"
+    - "(?:treat|consider) (?:all )?(?:prior|earlier|above) (?:directions|instructions|rules) as (?:void|invalid|obsolete)"
+    - "(?:prior|earlier|above) (?:directions|instructions|rules) (?:no longer|do not) apply"
+    - "(?:obey|execute) (?:the )?(?:following|next) (?:command|instruction|directive)"
 retention:
   terminal_days: 30
   quarantine_days: 30

@@ -6,10 +6,10 @@ router:
 parser:
   prefer_docling: true
   fail_on_vision_required: true
-  accelerator_device: cuda
+  accelerator_device: cpu
   ocr_backend: torch
 vision:
-  enabled: true
+  enabled: false
   backend: vllm
   base_url: http://vllm:8000/v1
   model_id: google/gemma-3-4b-it
@@ -22,6 +22,7 @@ vision:
 chunker:
   max_text_characters: 1800
   overlap_characters: 180
+  max_table_characters: 50000
 gpu_lease:
   enabled: true
   base_url: http://vllm:8000

@@ -1,10 +1,11 @@
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from findociq.index.embedder import BgeM3Embedder, Embedding, EmbeddingConfig
-from findociq.index.store import IndexRecord
+from findociq.index.store import IndexRecord, QdrantStore
 from findociq.ingest.schema import BoundingBox, Provenance, TextChunk
 from findociq.retrieve.cli import _chunk_files
 from findociq.retrieve.hybrid import reciprocal_rank_fusion
@@ -65,12 +66,22 @@ class FakeStore:
         self.hybrid_args: tuple[Embedding, int, int, int] | None = None
         self.results = (hit("a", 0.9, 1), hit("b", 0.8, 2), hit("c", 0.7, 3))
 
-    def dense_search(self, query: Embedding, limit: int) -> tuple[RetrievalHit, ...]:
+    def dense_search(
+        self,
+        query: Embedding,
+        limit: int,
+        **_scope: object,
+    ) -> tuple[RetrievalHit, ...]:
         self.dense_args = (query, limit)
         return self.results[:limit]
 
     def hybrid_search(
-        self, query: Embedding, limit: int, prefetch_limit: int, rrf_k: int
+        self,
+        query: Embedding,
+        limit: int,
+        prefetch_limit: int,
+        rrf_k: int,
+        **_scope: object,
     ) -> tuple[RetrievalHit, ...]:
         self.hybrid_args = (query, limit, prefetch_limit, rrf_k)
         return self.results[:limit]
@@ -178,6 +189,16 @@ def test_index_record_preserves_discriminated_chunk_type() -> None:
     assert record.model_dump(mode="json")["chunk"]["kind"] == "text"
 
 
+def test_qdrant_point_ids_are_namespaced_by_application() -> None:
+    first = chunk("same", "text").model_copy(
+        update={"metadata": {"application_id": "APP-A"}}
+    )
+    second = first.model_copy(update={"metadata": {"application_id": "APP-B"}})
+
+    assert QdrantStore.point_id(first) != QdrantStore.point_id(second)
+    assert QdrantStore.point_id(first) == QdrantStore.point_id(first)
+
+
 def test_rrf_deduplicates_and_scores_by_rank() -> None:
     fused = reciprocal_rank_fusion(
         [[hit("a", 0.9, 1), hit("b", 0.8, 2)], [hit("b", 0.7, 1), hit("c", 0.6, 2)]],
@@ -202,6 +223,19 @@ def test_pipeline_caches_deterministic_query_results() -> None:
     pipeline = RetrievalPipeline(strategy("dense"), embedder, FakeStore())
     assert pipeline.retrieve("revenue") is pipeline.retrieve("revenue")
     assert embedder.queries == ["revenue"]
+
+
+def test_pipeline_cache_is_bounded_and_application_invalidatable() -> None:
+    embedder = FakeEmbedder()
+    bounded = replace(strategy("dense"), cache_max_entries=2)
+    pipeline = RetrievalPipeline(bounded, embedder, FakeStore())
+    pipeline.retrieve("revenue", application_id="APP-A")
+    pipeline.retrieve("margin", application_id="APP-A")
+    pipeline.retrieve("dscr", application_id="APP-B")
+    assert len(pipeline._cache) == 2  # noqa: SLF001
+
+    pipeline.invalidate_application("APP-A")
+    assert all("\0APP-A\0" not in key for key in pipeline._cache)  # noqa: SLF001
 
 
 def test_pipeline_runs_hybrid_strategy_with_rrf_parameters() -> None:

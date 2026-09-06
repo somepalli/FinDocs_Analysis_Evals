@@ -155,12 +155,34 @@ def test_composite_recorder_fans_out_identical_safe_events() -> None:
     assert "What was revenue?" not in first.events[0].model_dump_json()
 
 
+def test_observability_sink_failure_does_not_change_business_execution() -> None:
+    class BrokenRecorder:
+        def record(self, event: object) -> None:
+            del event
+            raise OSError("sink unavailable")
+
+    healthy = InMemoryRecorder()
+    observer = TraceObserver(
+        CompositeRecorder(BrokenRecorder(), healthy), StepClock(0, 1_000_000)
+    )
+    with observer.span(context(), "business.stage"):
+        pass
+    assert len(healthy.events) == 1
+
+
 def test_langfuse_export_requires_environment_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     recorder = LangfuseOtlpRecorder(LangfuseOtlpConfig(enabled=True))
-    with (
-        pytest.raises(RuntimeError, match="LANGFUSE_PUBLIC_KEY"),
-        TraceObserver(recorder, StepClock(0, 1_000_000)).span(context(), "stage"),
-    ):
+    with TraceObserver(recorder, StepClock(0, 1_000_000)).span(context(), "stage"):
         pass
+
+
+def test_trace_hashes_caller_controlled_identifier() -> None:
+    trace = TraceContext.for_query(
+        "question", operation="test", question_id="person@example.com"
+    )
+    assert trace.question_id == __import__("hashlib").sha256(
+        b"person@example.com"
+    ).hexdigest()
+    assert "person@example.com" not in trace.model_dump_json()

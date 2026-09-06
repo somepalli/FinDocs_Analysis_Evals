@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from typing import Any, Literal
 
 import fitz
@@ -50,21 +51,36 @@ class DocumentParser:
         self.router = router or PageRouter()
         self.vision_extractor = vision_extractor or UnconfiguredGemmaVisionExtractor()
 
-    def parse(self, pdf_path: str | Path) -> ParsedDocument:
+    def parse(
+        self,
+        pdf_path: str | Path,
+        *,
+        timeout_seconds: float | None = None,
+        max_pages: int | None = None,
+    ) -> ParsedDocument:
         path = Path(pdf_path).resolve()
+        deadline = monotonic() + timeout_seconds if timeout_seconds is not None else None
         document_id = stable_document_id(path)
+        with fitz.open(path) as document:
+            if max_pages is not None and document.page_count > max_pages:
+                raise ValueError("document exceeds configured page limit")
         decisions = self.router.route(path)
+        self._check_deadline(deadline)
 
         if self.config.prefer_docling and any(
             decision.route is not PageRoute.DIGITAL for decision in decisions
         ):
-            docling_result = self._try_docling(path, document_id, decisions)
+            docling_result = self._try_docling(
+                path, document_id, decisions, timeout_seconds=timeout_seconds
+            )
             if docling_result is not None:
+                self._check_deadline(deadline)
                 return docling_result
 
         pages: list[ParsedPage] = []
         with fitz.open(path) as document:
             for decision, page in zip(decisions, document, strict=True):
+                self._check_deadline(deadline)
                 if decision.route is PageRoute.DIGITAL:
                     try:
                         blocks = self._parse_digital_page(path, document_id, page)
@@ -86,6 +102,11 @@ class DocumentParser:
             parser_name="pymupdf-fast-path+gemma-vision",
         )
 
+    @staticmethod
+    def _check_deadline(deadline: float | None) -> None:
+        if deadline is not None and monotonic() >= deadline:
+            raise TimeoutError("document parsing exceeded the configured deadline")
+
     def _vision_blocks(
         self, path: Path, document_id: str, page_number: int
     ) -> tuple[DocumentBlock, ...]:
@@ -105,6 +126,8 @@ class DocumentParser:
         path: Path,
         document_id: str,
         decisions: tuple[Any, ...],
+        *,
+        timeout_seconds: float | None = None,
     ) -> ParsedDocument | None:
         """Use Docling when installed, falling back safely if unavailable.
 
@@ -136,6 +159,7 @@ class DocumentParser:
             )
             pipeline_options = PdfPipelineOptions(
                 accelerator_options=AcceleratorOptions(device=device),
+                document_timeout=timeout_seconds,
                 ocr_options=RapidOcrOptions(
                     backend=self.config.ocr_backend,
                     rapidocr_params=rapidocr_params,

@@ -104,6 +104,7 @@ class GenerationClient(Protocol):
         self,
         prompt: str,
         *,
+        system_prompt: str | None = None,
         trace_context: TraceContext | None = None,
         stage: str = "generation",
     ) -> str: ...
@@ -121,6 +122,7 @@ class LocalGemmaClient:
         self,
         prompt: str,
         *,
+        system_prompt: str | None = None,
         trace_context: TraceContext | None = None,
         stage: str = "generation",
     ) -> str:
@@ -134,7 +136,7 @@ class LocalGemmaClient:
                 "backend": self.config.backend,
                 "model_id": self.config.model_id,
                 "model_revision": self.config.revision,
-                "prompt_characters": len(prompt),
+                "prompt_characters": len(prompt) + len(system_prompt or ""),
                 "max_tokens": self.config.max_tokens,
             },
         ) as attributes:
@@ -142,7 +144,14 @@ class LocalGemmaClient:
             endpoint = self.config.base_url.rstrip("/") + "/chat/completions"
             payload = {
                 "model": self.config.model_id,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [
+                    *(
+                        [{"role": "system", "content": system_prompt}]
+                        if system_prompt
+                        else []
+                    ),
+                    {"role": "user", "content": prompt},
+                ],
                 "temperature": self.config.temperature,
                 "seed": self.config.seed,
                 "max_tokens": self.config.max_tokens,

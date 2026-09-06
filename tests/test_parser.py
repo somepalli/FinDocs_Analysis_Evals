@@ -140,6 +140,17 @@ def test_complex_page_attempts_docling_before_vision(monkeypatch: pytest.MonkeyP
     assert attempted == [True]
 
 
+def test_parser_enforces_configured_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def slow_docling(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(DocumentParser, "_try_docling", slow_docling)
+    with pytest.raises(TimeoutError, match="configured deadline"):
+        DocumentParser(ParserConfig(prefer_docling=True)).parse(
+            FIXTURES / "scanned.pdf", timeout_seconds=0.0
+        )
+
+
 def test_docling_bottom_left_boxes_convert_to_pdf_coordinates() -> None:
     bbox = SimpleNamespace(l=10, t=800, r=110, b=700, coord_origin="BOTTOMLEFT")
     converted = DocumentParser._docling_bbox(bbox, page_height=842)

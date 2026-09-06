@@ -63,10 +63,12 @@ class FakeClient:
         self,
         prompt: str,
         *,
+        system_prompt: str | None = None,
         trace_context: TraceContext | None = None,
         stage: str = "generation",
     ) -> str:
         del trace_context
+        assert system_prompt is not None
         self.prompts.append(prompt)
         self.stages.append(stage)
         return self.responses.pop(0)
@@ -183,8 +185,9 @@ def test_two_pass_extracts_then_reasons_only_over_structured_json() -> None:
     assert result.answer.citations[0].page_number == 2
     assert "Revenue was INR 1,240" in client.prompts[0]
     assert "Revenue was INR 1,240" not in client.prompts[1]
-    assert '"figures"' in client.prompts[1]
-    assert '"evidence_id": "evidence_1"' in client.prompts[1]
+    assert '"structured_extraction"' in client.prompts[1]
+    assert '\\"figures\\"' in client.prompts[1]
+    assert '\\"evidence_id\\": \\"evidence_1\\"' in client.prompts[1]
     assert '"bbox"' not in client.prompts[1]
     assert client.stages == ["generation.pass1", "generation.pass2"]
     assert {event.stage for event in recorder.events} == {
@@ -229,6 +232,58 @@ def test_pass2_fails_closed_when_retry_still_selects_unknown_id() -> None:
     )
 
     with pytest.raises(ValueError, match="invalid evidence selection after retry"):
+        pipeline.run("What was revenue?", (retrieval_hit(),))
+
+
+def test_pass2_retries_and_rejects_answer_number_not_in_selected_evidence() -> None:
+    unsupported = json.dumps({"answer": "Revenue was 999 crore", "evidence_ids": ["evidence_1"]})
+    client = FakeClient(extraction_json(), unsupported, unsupported)
+    pipeline = ReasoningPipeline(
+        ReasoningPipelineConfig.from_yaml(ROOT / "configs/pipeline/two_pass.yaml"),
+        client,
+    )
+
+    with pytest.raises(ValueError, match="invalid evidence selection after retry"):
+        pipeline.run("What was revenue?", (retrieval_hit(),))
+
+
+def test_pass2_retries_and_rejects_unsupported_factual_prose() -> None:
+    unsupported = json.dumps(
+        {
+            "answer": "Revenue was INR 1,240 crore and the company is insolvent.",
+            "evidence_ids": ["evidence_1"],
+        }
+    )
+    pipeline = ReasoningPipeline(
+        ReasoningPipelineConfig.from_yaml(ROOT / "configs/pipeline/two_pass.yaml"),
+        FakeClient(extraction_json(), unsupported, unsupported),
+    )
+
+    with pytest.raises(ValueError, match="invalid evidence selection after retry"):
+        pipeline.run("What was revenue?", (retrieval_hit(),))
+
+
+def test_single_pass_rejects_answer_number_not_in_cited_evidence() -> None:
+    unsupported = json.loads(answer_json())
+    unsupported["answer"] = "Revenue was 999 crore"
+    pipeline = ReasoningPipeline(
+        ReasoningPipelineConfig.from_yaml(ROOT / "configs/pipeline/single_pass.yaml"),
+        FakeClient(json.dumps(unsupported)),
+    )
+
+    with pytest.raises(ValueError, match="unsupported by cited evidence"):
+        pipeline.run("What was revenue?", (retrieval_hit(),))
+
+
+def test_single_pass_rejects_unsupported_factual_prose() -> None:
+    unsupported = json.loads(answer_json())
+    unsupported["answer"] = "Revenue was INR 1,240 crore and the company is insolvent."
+    pipeline = ReasoningPipeline(
+        ReasoningPipelineConfig.from_yaml(ROOT / "configs/pipeline/single_pass.yaml"),
+        FakeClient(json.dumps(unsupported)),
+    )
+
+    with pytest.raises(ValueError, match="factual terms unsupported"):
         pipeline.run("What was revenue?", (retrieval_hit(),))
 
 
@@ -322,6 +377,28 @@ def test_pass1_repairs_model_bbox_only_when_value_has_unique_evidence() -> None:
     )
 
     assert extraction.figures[0].citation == citation()
+
+
+def test_pass1_rejects_value_absent_from_cited_evidence() -> None:
+    unsupported = json.loads(extraction_json())
+    unsupported["figures"][0]["value"] = "999"
+    unsupported["figures"][0]["citation"]["bbox"] = {
+        "x0": 0,
+        "y0": 0,
+        "x1": 1,
+        "y1": 1,
+    }
+
+    with pytest.raises(ValueError, match="not supported"):
+        Pass1Extractor(FakeClient(json.dumps(unsupported))).extract(
+            "What was revenue?", (retrieval_hit(),)
+        )
+
+    unsupported["figures"][0]["value"] = "1,240 and 999"
+    with pytest.raises(ValueError, match="not supported"):
+        Pass1Extractor(FakeClient(json.dumps(unsupported))).extract(
+            "What was revenue?", (retrieval_hit(),)
+        )
 
 
 def test_pass1_uses_proposed_page_to_disambiguate_repeated_value() -> None:

@@ -185,7 +185,11 @@ def create_app(
             )
             policy = app.state.production_policy
             registry: DocumentRegistry = app.state.document_registry
-            if not registry.owns(payload.application_id, payload.document_ids):
+            if not registry.owns(
+                payload.application_id,
+                payload.document_ids,
+                policy_hash=policy.policy_hash,
+            ):
                 raise HTTPException(403, "documents do not belong to this application")
             try:
                 question = "\n".join(
@@ -419,6 +423,9 @@ def _register_document(app: FastAPI, response: IngestDocumentResponse) -> Ingest
             + timedelta(days=policy.retention.terminal_days),
         )
     )
+    query_service: FinDocIQService | None = app.state.query_service
+    if query_service is not None:
+        query_service.retrieval.invalidate_application(response.application_id)
     canonical = "|".join(
         (
             response.application_id,
@@ -437,6 +444,7 @@ def _safe_document_code(error: Exception) -> str:
     allowed = {
         "active_pdf_content",
         "document_prompt_injection_risk",
+        "document_parse_timeout",
         "embedded_file",
         "encrypted_pdf",
         "malformed_pdf",

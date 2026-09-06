@@ -14,6 +14,8 @@ from tempfile import TemporaryDirectory
 from threading import Lock
 from typing import Protocol
 
+import fitz
+
 from findociq.api.schema import (
     IngestDocumentRequest,
     IngestDocumentResponse,
@@ -25,7 +27,7 @@ from findociq.ingest.config import IngestionConfig
 from findociq.ingest.docling_parser import DocumentParser
 from findociq.ingest.gpu_lease import GpuLeaseConfig, VllmGpuLease
 from findociq.ingest.router import PageRouter
-from findociq.ingest.schema import DocumentBlock
+from findociq.ingest.schema import DocumentBlock, ParsedDocument, TableChunk, TextChunk
 from findociq.ingest.vlm_fallback import (
     OpenAICompatibleGemmaVisionExtractor,
     VisionPageExtractor,
@@ -101,6 +103,7 @@ class DocumentIngestionService:
             and sum(map(len, decoded)) > self.production_policy.resources.max_batch_bytes
         ):
             raise DocumentIngestionError("document batch exceeds configured byte limit")
+        self._validate_page_counts(decoded)
         scan_receipts = self._scan_before_gpu(requests, decoded)
         _emit(progress, "waiting_gpu", "Waiting for exclusive GPU access", total=count)
         try:
@@ -160,7 +163,7 @@ class DocumentIngestionService:
                 _emit(
                     progress, "parsing_document", f"Parsing and OCR: {request.filename}", **details
                 )
-                parsed = self.parser.parse(path)
+                parsed = self._parse(path)
         else:
             folder = self.storage_root / digest
             folder.mkdir(parents=True, exist_ok=True)
@@ -171,7 +174,7 @@ class DocumentIngestionService:
             _emit(
                 progress, "parsing_document", f"Parsing and OCR: {request.filename}", **details
             )
-            parsed = self.parser.parse(path)
+            parsed = self._parse(path)
         if (
             self.production_policy is not None
             and len(parsed.pages) > self.production_policy.resources.max_pages
@@ -207,14 +210,9 @@ class DocumentIngestionService:
         if self.dlp is not None:
             protected = []
             for chunk in chunks:
-                result = self.dlp.inspect(chunk.text)
-                if result.receipt.instruction_risk:
-                    raise DocumentIngestionError("document_prompt_injection_risk")
-                dlp_receipts.append(result.receipt.model_dump(mode="json"))
-                update: dict[str, object] = {"text": result.redacted_text}
-                if hasattr(chunk, "table_text"):
-                    update["table_text"] = self.dlp.inspect(chunk.table_text).redacted_text
-                protected.append(chunk.model_copy(update=update))
+                redacted, receipts = _redact_chunk(chunk, self.dlp)
+                dlp_receipts.extend(receipts)
+                protected.append(redacted)
             chunks = tuple(protected)
         _emit(
             progress,
@@ -354,6 +352,34 @@ class DocumentIngestionService:
             raise DocumentIngestionError(str(error)) from error
         return receipts
 
+    def _validate_page_counts(self, contents: tuple[bytes, ...]) -> None:
+        """Reject excessive page counts before any parser, model, or GPU lease is used."""
+
+        if self.production_policy is None:
+            return
+        maximum = self.production_policy.resources.max_pages
+        for content in contents:
+            try:
+                with fitz.open(stream=content, filetype="pdf") as document:
+                    if document.page_count > maximum:
+                        raise DocumentIngestionError("document exceeds configured page limit")
+            except DocumentIngestionError:
+                raise
+            except Exception as error:
+                raise DocumentIngestionError("malformed_pdf") from error
+
+    def _parse(self, path: Path) -> ParsedDocument:
+        if self.production_policy is None:
+            return self.parser.parse(path)
+        try:
+            return self.parser.parse(
+                path,
+                timeout_seconds=self.production_policy.resources.parse_timeout_seconds,
+                max_pages=self.production_policy.resources.max_pages,
+            )
+        except TimeoutError as error:
+            raise DocumentIngestionError("document_parse_timeout") from error
+
     def _release_ingestion_models(self) -> None:
         self.embedder.release()
         collect()
@@ -373,6 +399,28 @@ def _emit(
 ) -> None:
     if reporter is not None:
         reporter(stage, message, **details)
+
+
+def _redact_chunk(
+    chunk: TextChunk | TableChunk, dlp: LocalDlpProvider
+) -> tuple[TextChunk | TableChunk, tuple[dict[str, object], ...]]:
+    """Redact every textual field that will be serialized into Qdrant."""
+
+    fields = ["text"]
+    if isinstance(chunk, TableChunk):
+        fields.extend(("table_text", "caption", "preceding_context"))
+    update: dict[str, object] = {}
+    receipts: list[dict[str, object]] = []
+    for field_name in fields:
+        value = getattr(chunk, field_name)
+        if value is None:
+            continue
+        result = dlp.inspect(value)
+        if result.receipt.instruction_risk:
+            raise DocumentIngestionError("document_prompt_injection_risk")
+        update[field_name] = result.redacted_text
+        receipts.append(result.receipt.model_dump(mode="json"))
+    return chunk.model_copy(update=update), tuple(receipts)
 
 
 class _SwitchingVisionExtractor(VisionPageExtractor):
@@ -413,6 +461,13 @@ def build_ingestion_service(
         if production_enabled
         else None
     )
+    if policy is not None and (
+        config.parser.accelerator_device != "cpu" or config.vision.enabled
+    ):
+        raise RuntimeError(
+            "production ingestion requires CPU parsing and disabled raw-page vision; "
+            "enable vision only behind a pre-model image-redaction boundary"
+        )
     encrypted_store = None
     if policy is not None:
         key_file = os.getenv("FINDOCIQ_DOCUMENT_MASTER_KEY_FILE")

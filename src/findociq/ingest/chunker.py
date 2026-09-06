@@ -21,12 +21,15 @@ from findociq.ingest.schema import (
 class ChunkerConfig:
     max_text_characters: int = 1_800
     overlap_characters: int = 180
+    max_table_characters: int = 50_000
 
     def __post_init__(self) -> None:
         if self.max_text_characters <= 0:
             raise ValueError("max_text_characters must be positive")
         if not 0 <= self.overlap_characters < self.max_text_characters:
             raise ValueError("overlap_characters must be >= 0 and smaller than max")
+        if self.max_table_characters <= 0:
+            raise ValueError("max_table_characters must be positive")
 
 
 class LayoutAwareChunker:
@@ -54,6 +57,8 @@ class LayoutAwareChunker:
 
     def _table_chunk(self, blocks: tuple[DocumentBlock, ...], index: int) -> TableChunk:
         table = blocks[index]
+        if len(table.text) > self.config.max_table_characters:
+            raise ValueError("atomic table exceeds configured character limit")
         caption_block = self._adjacent(blocks, index, BlockType.CAPTION)
         preceding_block = self._preceding_paragraph(blocks, index, caption_block)
         caption = caption_block.text if caption_block else None
@@ -172,9 +177,10 @@ class LayoutAwareChunker:
         caption = (chunk.caption or "").casefold()
         return "continued" in caption or bool(chunk.metadata.get("continued"))
 
-    @staticmethod
-    def _merge_table_parts(first: TableChunk, continuation: TableChunk) -> TableChunk:
+    def _merge_table_parts(self, first: TableChunk, continuation: TableChunk) -> TableChunk:
         table_text = f"{first.table_text}\n\n{continuation.table_text}"
+        if len(table_text) > self.config.max_table_characters:
+            raise ValueError("merged atomic table exceeds configured character limit")
         captions = [value for value in (first.caption, continuation.caption) if value]
         caption = " / ".join(captions) or None
         text = "\n\n".join(

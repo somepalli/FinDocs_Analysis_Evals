@@ -81,3 +81,31 @@ def test_text_splitting_is_deterministic_and_bounded() -> None:
     assert first == second
     assert all(len(chunk.text) <= 120 for chunk in first)
     assert all(chunk.provenance for chunk in first)
+
+
+def test_oversized_atomic_table_fails_closed_without_splitting() -> None:
+    table = DocumentBlock(
+        block_type=BlockType.TABLE,
+        text="x" * 101,
+        provenance=evidence(1, 10, 100),
+        order=0,
+        table_id="oversized",
+    )
+    document = ParsedDocument(
+        document_id="doc",
+        source_path="filing.pdf",
+        pages=(ParsedPage(page_number=1, route=PageRoute.DIGITAL, blocks=(table,)),),
+        parser_name="test",
+    )
+    chunker = LayoutAwareChunker(
+        ChunkerConfig(
+            max_text_characters=100,
+            overlap_characters=10,
+            max_table_characters=100,
+        )
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="atomic table"):
+        chunker.chunk(document)

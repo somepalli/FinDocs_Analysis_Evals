@@ -23,6 +23,12 @@ def test_ingestion_config_loads_into_nested_dataclasses() -> None:
     assert config.config_hash == config.config_hash
 
 
+def test_production_ingestion_config_keeps_raw_pages_off_models() -> None:
+    config = IngestionConfig.from_yaml(ROOT / "configs/ingestion/docker.yaml")
+    assert config.parser.accelerator_device == "cpu"
+    assert config.vision.enabled is False
+
+
 def test_ingestion_config_rejects_unknown_sections(tmp_path: Path) -> None:
     path = tmp_path / "bad.yaml"
     path.write_text("router: {}\nparser: {}\nchunker: {}\nunknown: {}\n", encoding="utf-8")

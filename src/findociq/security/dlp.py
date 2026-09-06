@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from hashlib import sha256
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -64,7 +65,12 @@ class LocalDlpProvider:
             redacted, count = pattern.subn(self.policy.replacement.format(kind=kind), redacted)
             if count:
                 counts[kind] = count
-        instruction_risk = any(pattern.search(text) for pattern in self._instruction_patterns)
+        normalized = _normalize_instruction_text(text)
+        instruction_risk = any(
+            pattern.search(candidate)
+            for pattern in self._instruction_patterns
+            for candidate in (text, normalized)
+        )
         return DlpResult(
             redacted_text=redacted,
             receipt=DlpReceipt(
@@ -75,3 +81,23 @@ class LocalDlpProvider:
                 disposition="needs_attention" if instruction_risk else "accepted",
             ),
         )
+
+
+def _normalize_instruction_text(text: str) -> str:
+    """Normalize common spacing and Unicode evasions before policy matching."""
+
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    tokens = re.findall(r"\w+|[^\w\s]+", normalized, flags=re.UNICODE)
+    rebuilt: list[str] = []
+    letters: list[str] = []
+    for token in tokens:
+        if len(token) == 1 and token.isalpha():
+            letters.append(token)
+            continue
+        if letters:
+            rebuilt.append("".join(letters))
+            letters = []
+        rebuilt.append(token)
+    if letters:
+        rebuilt.append("".join(letters))
+    return " ".join(rebuilt)

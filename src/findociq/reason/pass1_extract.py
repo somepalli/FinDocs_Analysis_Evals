@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from findociq.observability.recorder import TraceObserver
 from findociq.observability.schema import TraceContext
 from findociq.reason.generation import GenerationClient
-from findociq.reason.prompting import load_prompt, render_evidence, substitute
+from findociq.reason.prompting import load_prompt, render_evidence
 from findociq.reason.schema import (
     Pass1Extraction,
     SourceCitation,
@@ -38,13 +38,13 @@ class Pass1Extractor:
             raise ValueError("pass 1 requires at least one retrieved evidence chunk")
         context = trace_context or TraceContext.for_query(question, operation="reasoning:pass1")
         template = load_prompt("pass1_extract.txt")
-        prompt = substitute(
-            template,
-            QUESTION=question,
-            EVIDENCE=render_evidence(hits),
+        prompt = json.dumps(
+            {"question": question, "untrusted_evidence": render_evidence(hits)},
+            ensure_ascii=False,
         )
         raw = self.client.complete(
             prompt,
+            system_prompt=template,
             trace_context=context.with_prompt("pass1_extract", template),
             stage="generation.pass1",
         )
@@ -66,16 +66,20 @@ class Pass1Extractor:
             for hit in hits
             for provenance in hit.chunk.provenance
         )
-        try:
-            figures = tuple(
-                figure.model_copy(update={"citation": ground_citation(figure.citation, allowed)})
-                for figure in extraction.figures
-            )
-        except ValueError as error:
-            raise ValueError(
-                "pass 1 returned a citation not present in retrieved evidence"
-            ) from error
-        return extraction.model_copy(update={"figures": figures})
+        figures = []
+        for figure in extraction.figures:
+            try:
+                citation = ground_citation(figure.citation, allowed)
+            except ValueError as error:
+                raise ValueError(
+                    "pass 1 returned a citation not present in retrieved evidence"
+                ) from error
+            if not _value_supported_by_citation(figure.value, citation, hits):
+                raise ValueError(
+                    "pass 1 returned a figure not supported by retrieved evidence"
+                )
+            figures.append(figure.model_copy(update={"citation": citation}))
+        return extraction.model_copy(update={"figures": tuple(figures)})
 
 
 def _parse_json(raw: str) -> dict[str, object]:
@@ -95,6 +99,38 @@ def _parse_json(raw: str) -> dict[str, object]:
 
 
 _NUMBER = re.compile(r"(?<![\d.,])[-+]?\d[\d,]*(?:\.\d+)?(?![\d.,])")
+_WORD = re.compile(r"[^\W\d_]+[\w-]*", re.UNICODE)
+_GROUNDING_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "about",
+        "approximately",
+        "amounted",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "company",
+        "for",
+        "from",
+        "in",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "reported",
+        "stood",
+        "the",
+        "to",
+        "was",
+        "were",
+        "with",
+    }
+)
 
 
 def _repair_grounded_output(
@@ -137,12 +173,13 @@ def _unique_value_citation(
     if not isinstance(raw_value, str) or not raw_value.strip():
         return None
     value_numbers = _normalized_numbers(raw_value)
+    value_variants = _numeric_variants(raw_value)
     matching: list[SourceCitation] = []
     for hit in hits:
         text_matches = (
             bool(value_numbers)
             and len(value_numbers) == 1
-            and value_numbers[0] in _normalized_numbers(hit.chunk.text)
+            and bool(value_variants.intersection(_numeric_variants(hit.chunk.text)))
         ) or (not value_numbers and raw_value.strip().casefold() in hit.chunk.text.casefold())
         if text_matches:
             matching.extend(citation_from_provenance(item) for item in hit.chunk.provenance)
@@ -203,6 +240,28 @@ def _canonical_evidence_citation(
     return None
 
 
+def _value_supported_by_citation(
+    raw_value: str,
+    citation: SourceCitation,
+    hits: tuple[RetrievalHit, ...],
+) -> bool:
+    value_numbers = _normalized_numbers(raw_value)
+    value_groups = _numeric_groups(raw_value)
+    for hit in hits:
+        if not any(
+            citation_identity(citation_from_provenance(item)) == citation_identity(citation)
+            for item in hit.chunk.provenance
+        ):
+            continue
+        if value_numbers:
+            evidence_variants = _numeric_variants(hit.chunk.text)
+            if all(group.intersection(evidence_variants) for group in value_groups):
+                return True
+        elif raw_value.strip().casefold() in hit.chunk.text.casefold():
+            return True
+    return False
+
+
 def _normalized_numbers(value: str) -> tuple[Decimal, ...]:
     normalized: list[Decimal] = []
     for token in _NUMBER.findall(value):
@@ -211,3 +270,52 @@ def _normalized_numbers(value: str) -> tuple[Decimal, ...]:
         except InvalidOperation:
             continue
     return tuple(normalized)
+
+
+def _numeric_variants(value: str) -> frozenset[Decimal]:
+    return frozenset(number for group in _numeric_groups(value) for number in group)
+
+
+def _unsupported_answer_terms(answer: str, *trusted_sources: str) -> frozenset[str]:
+    """Return factual answer vocabulary absent from both the question and cited evidence."""
+
+    trusted = _grounding_terms(" ".join(trusted_sources))
+    return _grounding_terms(answer) - trusted
+
+
+def _grounding_terms(value: str) -> frozenset[str]:
+    return frozenset(
+        _canonical_grounding_term(token)
+        for match in _WORD.finditer(value.casefold())
+        if len(token := match.group()) > 2 and token not in _GROUNDING_STOP_WORDS
+    )
+
+
+def _canonical_grounding_term(token: str) -> str:
+    if token.startswith("fy") and len(token) == 6 and token[2:].isdigit():
+        return f"fy{token[-2:]}"
+    return token
+
+
+def _numeric_groups(value: str) -> tuple[frozenset[Decimal], ...]:
+    scales = {
+        "thousand": Decimal("1000"),
+        "lakh": Decimal("100000"),
+        "million": Decimal("1000000"),
+        "crore": Decimal("10000000"),
+        "billion": Decimal("1000000000"),
+    }
+    groups: list[frozenset[Decimal]] = []
+    for match in _NUMBER.finditer(value):
+        try:
+            number = Decimal(match.group().replace(",", ""))
+        except InvalidOperation:
+            continue
+        variants = {number}
+        suffix = value[match.end() :].lstrip().casefold()
+        for word, multiplier in scales.items():
+            if suffix.startswith(word):
+                variants.add(number * multiplier)
+                break
+        groups.append(frozenset(variants))
+    return tuple(groups)

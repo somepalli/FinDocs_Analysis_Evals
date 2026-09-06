@@ -24,7 +24,9 @@ class DocumentRecord(BaseModel):
 class DocumentRegistry(Protocol):
     def register(self, record: DocumentRecord) -> None: ...
 
-    def owns(self, application_id: str, document_ids: tuple[str, ...]) -> bool: ...
+    def owns(
+        self, application_id: str, document_ids: tuple[str, ...], *, policy_hash: str
+    ) -> bool: ...
 
     def delete_application(self, application_id: str, policy_hash: str) -> tuple[str, ...]: ...
 
@@ -55,13 +57,16 @@ class InMemoryDocumentRegistry:
                 raise ValueError("document identity conflicts with registered content")
             self._records[key] = record
 
-    def owns(self, application_id: str, document_ids: tuple[str, ...]) -> bool:
+    def owns(
+        self, application_id: str, document_ids: tuple[str, ...], *, policy_hash: str
+    ) -> bool:
         if not document_ids:
             return False
         with self._lock:
             return all(
                 (record := self._records.get((application_id, document_id))) is not None
                 and record.state == "active"
+                and record.policy_hash == policy_hash
                 for document_id in document_ids
             )
 
@@ -115,7 +120,9 @@ class PostgresSecurityStore:
             if cursor.rowcount != 1:
                 raise ValueError("document identity conflicts with registered content")
 
-    def owns(self, application_id: str, document_ids: tuple[str, ...]) -> bool:
+    def owns(
+        self, application_id: str, document_ids: tuple[str, ...], *, policy_hash: str
+    ) -> bool:
         if not document_ids:
             return False
         import psycopg
@@ -125,9 +132,10 @@ class PostgresSecurityStore:
                 """
                 SELECT count(DISTINCT document_id)
                 FROM findociq.documents
-                WHERE application_id = %s AND document_id = ANY(%s) AND state = 'active'
+                WHERE application_id = %s AND document_id = ANY(%s)
+                  AND state = 'active' AND policy_hash = %s
                 """,
-                (application_id, list(document_ids)),
+                (application_id, list(document_ids), policy_hash),
             )
             return cursor.fetchone()[0] == len(set(document_ids))
 

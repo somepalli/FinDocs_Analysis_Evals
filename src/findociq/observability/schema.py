@@ -93,7 +93,11 @@ class TraceContext(BaseModel):
             run_id=hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24],
             operation=operation,
             query_sha256=query_hash,
-            question_id=question_id,
+            question_id=(
+                hashlib.sha256(question_id.encode("utf-8")).hexdigest()
+                if question_id is not None
+                else None
+            ),
             config_hash=config_hash,
             dataset_sha256=dataset_sha256,
         )

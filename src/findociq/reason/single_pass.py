@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import json
+
 from findociq.observability.recorder import TraceObserver
 from findociq.observability.schema import TraceContext
 from findociq.reason.generation import GenerationClient
-from findociq.reason.pass1_extract import _parse_json
-from findociq.reason.prompting import load_prompt, render_evidence, substitute
-from findociq.reason.schema import ReasonedAnswer, citation_from_provenance, ground_citation
+from findociq.reason.pass1_extract import (
+    _numeric_groups,
+    _numeric_variants,
+    _parse_json,
+    _unsupported_answer_terms,
+)
+from findociq.reason.prompting import load_prompt, render_evidence
+from findociq.reason.schema import (
+    ReasonedAnswer,
+    citation_from_provenance,
+    citation_identity,
+    ground_citation,
+)
 from findociq.retrieve.schema import RetrievalHit
 
 
@@ -35,11 +47,11 @@ class SinglePassReasoner:
         answer = ReasonedAnswer.model_validate(
             _parse_json(
                 self.client.complete(
-                    substitute(
-                        template,
-                        QUESTION=question,
-                        EVIDENCE=render_evidence(hits),
+                    json.dumps(
+                        {"question": question, "untrusted_evidence": render_evidence(hits)},
+                        ensure_ascii=False,
                     ),
+                    system_prompt=template,
                     trace_context=prompt_context,
                     stage="generation.single_pass",
                 )
@@ -63,4 +75,24 @@ class SinglePassReasoner:
                 raise ValueError(
                     "single-pass returned a citation not present in retrieved evidence"
                 ) from error
+        cited_text = " ".join(
+            hit.chunk.text
+            for hit in hits
+            if any(
+                citation_identity(citation) == citation_identity(citation_from_provenance(item))
+                for citation in citations
+                for item in hit.chunk.provenance
+            )
+        )
+        evidence_numbers = _numeric_variants(cited_text)
+        if any(
+            not group.intersection(evidence_numbers)
+            for group in _numeric_groups(answer.answer)
+        ):
+            raise ValueError("single-pass answer contains a number unsupported by cited evidence")
+        unsupported = _unsupported_answer_terms(answer.answer, question, cited_text)
+        if unsupported:
+            raise ValueError(
+                "single-pass answer contains factual terms unsupported by cited evidence"
+            )
         return answer.model_copy(update={"citations": citations})

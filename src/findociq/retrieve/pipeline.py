@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -26,6 +27,7 @@ class RetrievalStrategyConfig:
     rerank_top_k: int | None
     prefetch_top_k: int
     rrf_k: int
+    cache_max_entries: int = 256
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -36,6 +38,8 @@ class RetrievalStrategyConfig:
             raise ValueError("retrieval limits and rrf_k must be positive")
         if self.rerank_top_k is not None and not 0 < self.rerank_top_k <= self.retrieve_top_k:
             raise ValueError("rerank_top_k must be between 1 and retrieve_top_k")
+        if self.cache_max_entries <= 0:
+            raise ValueError("cache_max_entries must be positive")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> RetrievalStrategyConfig:
@@ -43,7 +47,15 @@ class RetrievalStrategyConfig:
         payload = yaml.safe_load(source.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(f"retrieval config must be a mapping: {source}")
-        expected = {"name", "mode", "retrieve_top_k", "rerank_top_k", "prefetch_top_k", "rrf_k"}
+        expected = {
+            "name",
+            "mode",
+            "retrieve_top_k",
+            "rerank_top_k",
+            "prefetch_top_k",
+            "rrf_k",
+            "cache_max_entries",
+        }
         if set(payload) != expected:
             raise ValueError(
                 f"invalid retrieval config keys; missing={sorted(expected - set(payload))}, "
@@ -93,7 +105,7 @@ class RetrievalPipeline:
         self.store = store
         self.reranker = reranker
         self.observer = observer or TraceObserver()
-        self._cache: dict[str, tuple[RetrievalHit, ...]] = {}
+        self._cache: OrderedDict[str, tuple[RetrievalHit, ...]] = OrderedDict()
 
     def retrieve(
         self,
@@ -117,6 +129,7 @@ class RetrievalPipeline:
             cached = self._cache.get(cache_key)
             total_attributes["cache_hit"] = cached is not None
             if cached is not None:
+                self._cache.move_to_end(cache_key)
                 total_attributes["hit_count"] = len(cached)
                 return cached
             with self.observer.span(context, "retrieval.embedding"):
@@ -159,7 +172,18 @@ class RetrievalPipeline:
                     rerank_attributes["hit_count"] = len(results)
             total_attributes["hit_count"] = len(results)
             self._cache[cache_key] = results
+            self._cache.move_to_end(cache_key)
+            while len(self._cache) > self.config.cache_max_entries:
+                self._cache.popitem(last=False)
             return results
+
+    def invalidate_application(self, application_id: str) -> None:
+        """Drop cached evidence after an application's indexed content changes."""
+
+        marker = f"\0{application_id}\0"
+        for key in tuple(self._cache):
+            if marker in key:
+                del self._cache[key]
 
     def _rerank(self, query: str, hits: tuple[RetrievalHit, ...]) -> tuple[RetrievalHit, ...]:
         scores = self.reranker.score(query, [hit.chunk.text for hit in hits])
