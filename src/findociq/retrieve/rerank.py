@@ -50,6 +50,10 @@ class BgeReranker:
             raise ValueError("reranker returned a different number of scores than documents")
         return scores
 
+    def release(self) -> None:
+        """Drop model weights before returning GPU ownership to generation."""
+        self._model = None
+
     def _get_model(self) -> Any:
         if self._model is None:
             try:

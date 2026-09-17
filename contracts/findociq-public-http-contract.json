@@ -3,6 +3,7 @@
   "endpoints": {
     "/extract": {
       "development_request": "ExtractRequest",
+      "document_set_request": "DocumentSetExtractRequest",
       "production_request": "ProductionExtractRequest",
       "response": "ExtractResponse"
     },
@@ -14,15 +15,957 @@
       "request": "IngestBatchRequest",
       "response": "IngestBatchResponse"
     },
+    "/v1/document-sets": {
+      "request": "DocumentSetRequest",
+      "response": "DocumentSetResponse"
+    },
+    "/v1/document-sets/validate": {
+      "request": "DocumentSetValidationRequest",
+      "response": "DocumentSetValidationResponse"
+    },
     "/v1/documents": {
       "request": "IngestDocumentRequest",
       "response": "IngestDocumentResponse"
+    },
+    "/v1/evidence-assessments": {
+      "request": "DocumentSetExtractRequest",
+      "response": "EvidenceAssessmentResponse"
     },
     "/v1/ingestion-activity/{batch_id}": {
       "response": "IngestionActivityResponse"
     }
   },
   "schemas": {
+    "DocumentSetExtractRequest": {
+      "$defs": {
+        "BasisInterpretation": {
+          "additionalProperties": false,
+          "properties": {
+            "authority": {
+              "default": "context_link",
+              "enum": [
+                "context_link",
+                "reporting_scope"
+              ],
+              "type": "string"
+            },
+            "basis": {
+              "enum": [
+                "standalone",
+                "consolidated"
+              ],
+              "type": "string"
+            },
+            "context_citations": {
+              "items": {
+                "$ref": "#/$defs/SourceCitation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "type": "array"
+            },
+            "document_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "entity_hash": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "period": {
+              "pattern": "^20\\d{2}$",
+              "type": "string"
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "target_chunk_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "target_citation": {
+              "$ref": "#/$defs/SourceCitation"
+            }
+          },
+          "required": [
+            "document_id",
+            "target_chunk_id",
+            "target_citation",
+            "basis",
+            "period",
+            "policy_hash",
+            "context_citations"
+          ],
+          "type": "object"
+        },
+        "BoundingBox": {
+          "properties": {
+            "x0": {
+              "type": "number"
+            },
+            "x1": {
+              "type": "number"
+            },
+            "y0": {
+              "type": "number"
+            },
+            "y1": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x0",
+            "y0",
+            "x1",
+            "y1"
+          ],
+          "type": "object"
+        },
+        "SourceCitation": {
+          "properties": {
+            "bbox": {
+              "$ref": "#/$defs/BoundingBox"
+            },
+            "document_id": {
+              "type": "string"
+            },
+            "page_number": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "document_id",
+            "page_number",
+            "bbox"
+          ],
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "maxLength": 200,
+          "minLength": 3,
+          "type": "string"
+        },
+        "assessment_date": {
+          "anyOf": [
+            {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command_id": {
+          "maxLength": 200,
+          "minLength": 8,
+          "type": "string"
+        },
+        "contract_version": {
+          "const": "2.1",
+          "default": "2.1",
+          "type": "string"
+        },
+        "document_set_id": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "interpretation_command_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f-]{36}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "interpretations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/BasisInterpretation"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        "metric_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "application_id",
+        "document_set_id",
+        "metric_ids",
+        "command_id"
+      ],
+      "type": "object"
+    },
+    "DocumentSetRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "maxLength": 200,
+          "minLength": 3,
+          "type": "string"
+        },
+        "document_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "application_id",
+        "document_ids"
+      ],
+      "type": "object"
+    },
+    "DocumentSetResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "type": "string"
+        },
+        "document_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "document_set_id": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "policy_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id",
+        "document_set_id",
+        "document_count",
+        "policy_hash"
+      ],
+      "type": "object"
+    },
+    "DocumentSetValidationRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "maxLength": 200,
+          "minLength": 3,
+          "type": "string"
+        },
+        "document_set_id": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id",
+        "document_set_id"
+      ],
+      "type": "object"
+    },
+    "DocumentSetValidationResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "type": "string"
+        },
+        "document_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "document_set_id": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "evidence_policy_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "policy_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id",
+        "document_set_id",
+        "document_count",
+        "policy_hash",
+        "evidence_policy_hash"
+      ],
+      "type": "object"
+    },
+    "EvidenceAssessmentResponse": {
+      "$defs": {
+        "BasisInterpretation": {
+          "additionalProperties": false,
+          "properties": {
+            "authority": {
+              "default": "context_link",
+              "enum": [
+                "context_link",
+                "reporting_scope"
+              ],
+              "type": "string"
+            },
+            "basis": {
+              "enum": [
+                "standalone",
+                "consolidated"
+              ],
+              "type": "string"
+            },
+            "context_citations": {
+              "items": {
+                "$ref": "#/$defs/SourceCitation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "type": "array"
+            },
+            "document_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "entity_hash": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "period": {
+              "pattern": "^20\\d{2}$",
+              "type": "string"
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "target_chunk_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "target_citation": {
+              "$ref": "#/$defs/SourceCitation"
+            }
+          },
+          "required": [
+            "document_id",
+            "target_chunk_id",
+            "target_citation",
+            "basis",
+            "period",
+            "policy_hash",
+            "context_citations"
+          ],
+          "type": "object"
+        },
+        "BoundingBox": {
+          "properties": {
+            "x0": {
+              "type": "number"
+            },
+            "x1": {
+              "type": "number"
+            },
+            "y0": {
+              "type": "number"
+            },
+            "y1": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x0",
+            "y0",
+            "x1",
+            "y1"
+          ],
+          "type": "object"
+        },
+        "CalculationReceipt": {
+          "additionalProperties": false,
+          "properties": {
+            "formula_id": {
+              "type": "string"
+            },
+            "operands": {
+              "items": {
+                "$ref": "#/$defs/ExtractedFigure"
+              },
+              "maxItems": 6,
+              "minItems": 2,
+              "type": "array"
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "formula_id",
+            "policy_hash",
+            "operands"
+          ],
+          "type": "object"
+        },
+        "CompanyAgeReceipt": {
+          "additionalProperties": false,
+          "properties": {
+            "assessment_date": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            "formula_id": {
+              "const": "completed_incorporation_years_v1",
+              "default": "completed_incorporation_years_v1",
+              "type": "string"
+            },
+            "incorporation_date": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "source_chunk_id": {
+              "type": "string"
+            },
+            "source_citation": {
+              "$ref": "#/$defs/SourceCitation"
+            }
+          },
+          "required": [
+            "incorporation_date",
+            "assessment_date",
+            "source_chunk_id",
+            "source_citation",
+            "policy_hash"
+          ],
+          "type": "object"
+        },
+        "EvidenceValidation": {
+          "additionalProperties": false,
+          "properties": {
+            "basis": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "basis_resolution": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "chunk_id": {
+              "type": "string"
+            },
+            "context_citations": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/SourceCitation"
+              },
+              "type": "array"
+            },
+            "conversion_factor": {
+              "type": "string"
+            },
+            "date_calculation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CompanyAgeReceipt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "document_type": {
+              "type": "string"
+            },
+            "entity_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "interpretation_command_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "metric_id": {
+              "type": "string"
+            },
+            "nic_activities": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/NicActivity"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "nic_mapping_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "period": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "source_approval_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_unit": {
+              "type": "string"
+            },
+            "source_value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy_hash",
+            "metric_id",
+            "document_type",
+            "entity_hash",
+            "chunk_id",
+            "source_value",
+            "source_unit",
+            "conversion_factor"
+          ],
+          "type": "object"
+        },
+        "ExtractedFigure": {
+          "properties": {
+            "calculation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CalculationReceipt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "citation": {
+              "$ref": "#/$defs/SourceCitation"
+            },
+            "evidence_validation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EvidenceValidation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "label": {
+              "type": "string"
+            },
+            "period": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "unit": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "value",
+            "citation"
+          ],
+          "type": "object"
+        },
+        "FieldAssessment": {
+          "additionalProperties": false,
+          "properties": {
+            "acceptable_sources": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "candidate_citations": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/SourceCitation"
+              },
+              "maxItems": 20,
+              "type": "array"
+            },
+            "error_code": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "figure": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedFigure"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "metric_id": {
+              "type": "string"
+            },
+            "operand_diagnostics": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/OperandDiagnostic"
+              },
+              "maxItems": 48,
+              "type": "array"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "metric_id",
+            "status"
+          ],
+          "type": "object"
+        },
+        "NicActivity": {
+          "additionalProperties": false,
+          "properties": {
+            "activity": {
+              "type": "string"
+            },
+            "class_code": {
+              "type": "string"
+            },
+            "class_description": {
+              "type": "string"
+            },
+            "division": {
+              "type": "string"
+            },
+            "division_description": {
+              "type": "string"
+            },
+            "subclass": {
+              "type": "string"
+            },
+            "subclass_description": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "division",
+            "class_code",
+            "subclass",
+            "division_description",
+            "class_description",
+            "subclass_description",
+            "activity"
+          ],
+          "type": "object"
+        },
+        "OperandDiagnostic": {
+          "additionalProperties": false,
+          "properties": {
+            "error_code": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "formula_id": {
+              "type": "string"
+            },
+            "metric_id": {
+              "type": "string"
+            },
+            "stage": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "numerator",
+                    "debt_service",
+                    "numerator_and_debt_service"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "formula_id",
+            "metric_id"
+          ],
+          "type": "object"
+        },
+        "SectionClassification": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/SourceCitation"
+              },
+              "type": "array"
+            },
+            "classifier_version": {
+              "type": "string"
+            },
+            "document_id": {
+              "type": "string"
+            },
+            "page_end": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "page_start": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "status": {
+              "enum": [
+                "confirmed",
+                "ambiguous",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            "types": {
+              "items": {
+                "enum": [
+                  "pan",
+                  "aadhaar",
+                  "gst",
+                  "udyam",
+                  "incorporation",
+                  "agreement",
+                  "bank_statement",
+                  "utility_bill",
+                  "audited_financials",
+                  "financial_statement",
+                  "financial_information_report",
+                  "payroll",
+                  "valuation",
+                  "tax_return",
+                  "no_dues",
+                  "unknown",
+                  "mixed"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "document_id",
+            "page_start",
+            "page_end",
+            "types",
+            "status",
+            "classifier_version"
+          ],
+          "type": "object"
+        },
+        "SourceCitation": {
+          "properties": {
+            "bbox": {
+              "$ref": "#/$defs/BoundingBox"
+            },
+            "document_id": {
+              "type": "string"
+            },
+            "page_number": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "document_id",
+            "page_number",
+            "bbox"
+          ],
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "type": "string"
+        },
+        "classifications": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SectionClassification"
+          },
+          "type": "array"
+        },
+        "document_set_id": {
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/FieldAssessment"
+          },
+          "type": "array"
+        },
+        "interpretation_command_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "interpretation_options": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/BasisInterpretation"
+          },
+          "type": "array"
+        },
+        "policy_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id",
+        "document_set_id",
+        "policy_hash",
+        "fields"
+      ],
+      "type": "object"
+    },
     "ExtractRequest": {
       "additionalProperties": false,
       "properties": {
@@ -33,6 +976,19 @@
           },
           "maxItems": 20,
           "type": "array"
+        },
+        "metric_id": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "question": {
           "maxLength": 4000,
@@ -83,10 +1039,239 @@
           ],
           "type": "object"
         },
+        "CalculationReceipt": {
+          "additionalProperties": false,
+          "properties": {
+            "formula_id": {
+              "type": "string"
+            },
+            "operands": {
+              "items": {
+                "$ref": "#/$defs/ExtractedFigure"
+              },
+              "maxItems": 6,
+              "minItems": 2,
+              "type": "array"
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "formula_id",
+            "policy_hash",
+            "operands"
+          ],
+          "type": "object"
+        },
+        "CompanyAgeReceipt": {
+          "additionalProperties": false,
+          "properties": {
+            "assessment_date": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            "formula_id": {
+              "const": "completed_incorporation_years_v1",
+              "default": "completed_incorporation_years_v1",
+              "type": "string"
+            },
+            "incorporation_date": {
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "source_chunk_id": {
+              "type": "string"
+            },
+            "source_citation": {
+              "$ref": "#/$defs/SourceCitation"
+            }
+          },
+          "required": [
+            "incorporation_date",
+            "assessment_date",
+            "source_chunk_id",
+            "source_citation",
+            "policy_hash"
+          ],
+          "type": "object"
+        },
+        "EvidenceValidation": {
+          "additionalProperties": false,
+          "properties": {
+            "basis": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "basis_resolution": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "chunk_id": {
+              "type": "string"
+            },
+            "context_citations": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/SourceCitation"
+              },
+              "type": "array"
+            },
+            "conversion_factor": {
+              "type": "string"
+            },
+            "date_calculation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CompanyAgeReceipt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "document_type": {
+              "type": "string"
+            },
+            "entity_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "interpretation_command_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "metric_id": {
+              "type": "string"
+            },
+            "nic_activities": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/NicActivity"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "nic_mapping_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "period": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "policy_hash": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "source_approval_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_provider": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "source_unit": {
+              "type": "string"
+            },
+            "source_value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "policy_hash",
+            "metric_id",
+            "document_type",
+            "entity_hash",
+            "chunk_id",
+            "source_value",
+            "source_unit",
+            "conversion_factor"
+          ],
+          "type": "object"
+        },
         "ExtractedFigure": {
           "properties": {
+            "calculation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CalculationReceipt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "citation": {
               "$ref": "#/$defs/SourceCitation"
+            },
+            "evidence_validation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EvidenceValidation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "label": {
               "type": "string"
@@ -121,6 +1306,42 @@
             "label",
             "value",
             "citation"
+          ],
+          "type": "object"
+        },
+        "NicActivity": {
+          "additionalProperties": false,
+          "properties": {
+            "activity": {
+              "type": "string"
+            },
+            "class_code": {
+              "type": "string"
+            },
+            "class_description": {
+              "type": "string"
+            },
+            "division": {
+              "type": "string"
+            },
+            "division_description": {
+              "type": "string"
+            },
+            "subclass": {
+              "type": "string"
+            },
+            "subclass_description": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "division",
+            "class_code",
+            "subclass",
+            "division_description",
+            "class_description",
+            "subclass_description",
+            "activity"
           ],
           "type": "object"
         },
@@ -172,7 +1393,8 @@
           "default": "1.0",
           "enum": [
             "1.0",
-            "2.0"
+            "2.0",
+            "2.1"
           ],
           "type": "string"
         },
@@ -258,7 +1480,7 @@
             "filename": {
               "maxLength": 240,
               "minLength": 5,
-              "pattern": "^[^/\\\\]+\\.[Pp][Dd][Ff]$",
+              "pattern": "^[^/\\\\]+\\.(?i:pdf|jpe?g|png)$",
               "type": "string"
             },
             "policy_hash": {
@@ -314,6 +1536,7 @@
           "items": {
             "$ref": "#/$defs/IngestDocumentRequest"
           },
+          "maxItems": 10000,
           "minItems": 1,
           "type": "array"
         }
@@ -466,6 +1689,30 @@
           ],
           "type": "string"
         },
+        "document_set_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "document_set_policy_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "documents": {
           "items": {
             "$ref": "#/$defs/IngestDocumentResponse"
@@ -523,7 +1770,7 @@
         "filename": {
           "maxLength": 240,
           "minLength": 5,
-          "pattern": "^[^/\\\\]+\\.[Pp][Dd][Ff]$",
+          "pattern": "^[^/\\\\]+\\.(?i:pdf|jpe?g|png)$",
           "type": "string"
         },
         "policy_hash": {
@@ -903,6 +2150,7 @@
   "service": "findociq",
   "supported_contract_versions": [
     "1.0",
-    "2.0"
+    "2.0",
+    "2.1"
   ]
 }

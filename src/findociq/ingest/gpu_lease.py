@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from threading import Lock
+from threading import RLock
 from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
@@ -39,6 +39,9 @@ class GpuLeaseConfig(BaseModel):
 
 GpuRequester = Callable[[Request, int], Any]
 
+# All in-process ingestion and extraction services share the same model runtime.
+_MODEL_RUNTIME_LOCK = RLock()
+
 
 class GpuLeaseError(RuntimeError):
     """vLLM could not safely transfer GPU ownership."""
@@ -54,15 +57,22 @@ class VllmGpuLease:
     ) -> None:
         self.config = config
         self._requester = requester or _request
-        self._lock = Lock()
+        self._lock = _MODEL_RUNTIME_LOCK
         self._batch_sleeping = False
+
+    @contextmanager
+    def operation(self) -> Iterator[None]:
+        """Serialize model initialization and inference across API services."""
+        with self._lock:
+            yield
 
     @contextmanager
     def ingestion_batch(self) -> Iterator[None]:
         """Give one complete ingestion batch exclusive use of the GPU."""
 
         if not self.config.enabled:
-            yield
+            with self._lock:
+                yield
             return
         with self._lock:
             self._sleep()

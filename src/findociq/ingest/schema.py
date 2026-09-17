@@ -120,6 +120,7 @@ class TableChunk(BaseModel):
     caption: str | None = None
     preceding_context: str | None = None
     provenance: tuple[Provenance, ...] = Field(min_length=1)
+    table_provenance: tuple[Provenance, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

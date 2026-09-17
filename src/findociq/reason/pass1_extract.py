@@ -75,9 +75,7 @@ class Pass1Extractor:
                     "pass 1 returned a citation not present in retrieved evidence"
                 ) from error
             if not _value_supported_by_citation(figure.value, citation, hits):
-                raise ValueError(
-                    "pass 1 returned a figure not supported by retrieved evidence"
-                )
+                raise ValueError("pass 1 returned a figure not supported by retrieved evidence")
             figures.append(figure.model_copy(update={"citation": citation}))
         return extraction.model_copy(update={"figures": tuple(figures)})
 
@@ -149,9 +147,7 @@ def _repair_grounded_output(
         if not isinstance(item, dict):
             repaired_figures.append(item)
             continue
-        citation = _unique_value_citation(
-            item.get("value"), hits, proposed=item.get("citation")
-        )
+        citation = _unique_value_citation(item.get("value"), hits, proposed=item.get("citation"))
         if citation is None:
             citation = _canonical_evidence_citation(item.get("citation"), hits)
         if citation is None:
@@ -202,9 +198,7 @@ def _unique_value_citation(
         return next(iter(matching_page.values()))
     if matching_page:
         try:
-            return ground_citation(
-                proposed_citation, matching_page.values(), minimum_iou=0.01
-            )
+            return ground_citation(proposed_citation, matching_page.values(), minimum_iou=0.01)
         except ValueError:
             pass
     return None
@@ -232,9 +226,7 @@ def _canonical_evidence_citation(
         return next(iter(candidates.values()))
     if candidates:
         try:
-            return ground_citation(
-                proposed_citation, candidates.values(), minimum_iou=0.01
-            )
+            return ground_citation(proposed_citation, candidates.values(), minimum_iou=0.01)
         except ValueError:
             pass
     return None

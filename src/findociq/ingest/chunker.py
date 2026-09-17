@@ -75,6 +75,7 @@ class LayoutAwareChunker:
             caption=caption,
             preceding_context=preceding,
             provenance=provenance,
+            table_provenance=(table.provenance,),
             metadata={"table_id": table.table_id, "atomic": True},
         )
 
@@ -204,5 +205,6 @@ class LayoutAwareChunker:
             caption=caption,
             preceding_context=first.preceding_context,
             provenance=provenance,
+            table_provenance=(*first.table_provenance, *continuation.table_provenance),
             metadata=metadata,
         )

@@ -145,11 +145,7 @@ class LocalGemmaClient:
             payload = {
                 "model": self.config.model_id,
                 "messages": [
-                    *(
-                        [{"role": "system", "content": system_prompt}]
-                        if system_prompt
-                        else []
-                    ),
+                    *([{"role": "system", "content": system_prompt}] if system_prompt else []),
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": self.config.temperature,

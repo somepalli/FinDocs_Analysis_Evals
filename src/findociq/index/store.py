@@ -44,7 +44,10 @@ class RetrievalStore(Protocol):
     def upsert(self, records: Sequence[IndexRecord]) -> None: ...
 
     def dense_search(
-        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = (),
+        self,
+        query: Embedding,
+        limit: int,
+        document_ids: tuple[str, ...] = (),
         application_id: str | None = None,
     ) -> tuple[RetrievalHit, ...]: ...
 
@@ -115,6 +118,44 @@ class QdrantStore:
         )
         return str(uuid5(NAMESPACE_URL, identity))
 
+    def scoped_chunks(
+        self,
+        document_ids: tuple[str, ...],
+        application_id: str | None = None,
+        *,
+        max_chunks: int = 20000,
+    ) -> tuple[Chunk, ...]:
+        """Read bounded source evidence; never silently use a truncated inventory."""
+        if not document_ids:
+            raise ValueError("evidence_document_scope_missing")
+        client, models = self._dependencies()
+        chunks = []
+        offset = None
+        while True:
+            records, offset = client.scroll(
+                collection_name=self.config.collection,
+                scroll_filter=self._document_filter(models, document_ids, application_id),
+                limit=min(256, max_chunks + 1 - len(chunks)),
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for record in records:
+                chunk = CHUNK_ADAPTER.validate_python((record.payload or {}).get("chunk"))
+                if any(p.document_id not in document_ids for p in chunk.provenance):
+                    raise PermissionError("evidence_scope_violation")
+                if application_id and chunk.metadata.get("application_id") != application_id:
+                    raise PermissionError("evidence_scope_violation")
+                chunks.append(chunk)
+            if len(chunks) > max_chunks:
+                raise ValueError("evidence_inventory_limit")
+            if offset is None:
+                break
+        present = {p.document_id for c in chunks for p in c.provenance}
+        if present != set(document_ids):
+            raise ValueError("evidence_document_missing")
+        return tuple(chunks)
+
     def delete_application(self, application_id: str) -> None:
         client, models = self._dependencies()
         client.delete(
@@ -133,7 +174,10 @@ class QdrantStore:
         )
 
     def dense_search(
-        self, query: Embedding, limit: int, document_ids: tuple[str, ...] = (),
+        self,
+        query: Embedding,
+        limit: int,
+        document_ids: tuple[str, ...] = (),
         application_id: str | None = None,
     ) -> tuple[RetrievalHit, ...]:
         client, models = self._dependencies()

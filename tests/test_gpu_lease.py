@@ -69,3 +69,64 @@ def test_vision_fallback_temporarily_wakes_then_resleeps() -> None:
 def test_gpu_lease_rejects_remote_control_endpoint() -> None:
     with pytest.raises(ValueError, match="local or internal"):
         GpuLeaseConfig(enabled=True, base_url="https://example.com")
+
+
+def test_distinct_services_serialize_model_operations() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    ingestion = VllmGpuLease(GpuLeaseConfig())
+    extraction = VllmGpuLease(GpuLeaseConfig())
+    attempted, entered = Event(), Event()
+
+    def concurrent_load() -> None:
+        attempted.set()
+        with extraction.operation():
+            entered.set()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with ingestion.ingestion_batch():
+            future = pool.submit(concurrent_load)
+            assert attempted.wait(2)
+            assert not entered.wait(0.1)
+        future.result(timeout=2)
+        assert entered.is_set()
+
+
+@pytest.mark.parametrize("fail_retrieval", [False, True])
+def test_query_releases_retrieval_before_waking_generation(fail_retrieval: bool) -> None:
+    from findociq.service import FinDocIQService
+
+    server = FakeVllm()
+    events = []
+
+    class Retrieval:
+        def retrieve(self, *args, **kwargs):
+            assert server.sleeping
+            events.append("retrieve")
+            if fail_retrieval:
+                raise ValueError("retrieval failure")
+            return ()
+
+        def release_models(self):
+            assert server.sleeping
+            events.append("release")
+
+    class Reasoning:
+        def run(self, *args, **kwargs):
+            assert not server.sleeping
+            assert events == ["retrieve", "release"]
+            events.append("reason")
+            return "done"
+
+    service = FinDocIQService(
+        Retrieval(), {"two_pass": Reasoning()},
+        gpu_lease=VllmGpuLease(GpuLeaseConfig(enabled=True), requester=server),
+    )
+    if fail_retrieval:
+        with pytest.raises(ValueError, match="retrieval failure"):
+            service.query("test", mode="two_pass")
+        assert events == ["retrieve", "release"]
+    else:
+        assert service.query("test", mode="two_pass") == "done"
+    assert not server.sleeping

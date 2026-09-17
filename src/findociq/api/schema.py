@@ -7,7 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from findociq.reason.schema import ExtractedFigure, SourceCitation
+from findociq.reason.classification import SectionClassification
+from findociq.reason.schema import (
+    BasisInterpretation,
+    ExtractedFigure,
+    FieldAssessment,
+    SourceCitation,
+)
 from findociq.service import ReasoningMode
 
 
@@ -36,6 +42,7 @@ class ExtractRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     question_id: str | None = Field(default=None, min_length=1, max_length=200)
     document_ids: tuple[str, ...] = Field(default=(), max_length=20)
+    metric_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class ProductionExtractRequest(BaseModel):
@@ -50,13 +57,60 @@ class ProductionExtractRequest(BaseModel):
     command_id: str = Field(min_length=8, max_length=200)
 
 
+class DocumentSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    application_id: str = Field(min_length=3, max_length=200)
+    document_ids: tuple[str, ...] = Field(min_length=1, max_length=10000)
+
+
+class DocumentSetResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    application_id: str
+    document_set_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    document_count: int = Field(ge=1)
+    policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class DocumentSetValidationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    application_id: str = Field(min_length=3, max_length=200)
+    document_set_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class DocumentSetValidationResponse(DocumentSetResponse):
+    evidence_policy_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class DocumentSetExtractRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    contract_version: Literal["2.1"] = "2.1"
+    application_id: str = Field(min_length=3, max_length=200)
+    document_set_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    metric_ids: tuple[str, ...] = Field(min_length=1, max_length=20)
+    command_id: str = Field(min_length=8, max_length=200)
+    interpretations: tuple[BasisInterpretation, ...] = Field(default=(), max_length=20)
+    interpretation_command_id: str | None = Field(default=None, pattern=r"^[0-9a-f-]{36}$")
+    assessment_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class EvidenceAssessmentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    application_id: str
+    document_set_id: str
+    policy_hash: str
+    interpretation_command_id: str | None = None
+    fields: tuple[FieldAssessment, ...]
+    interpretation_options: tuple[BasisInterpretation, ...] = ()
+    classifications: tuple[SectionClassification, ...] = ()
+
+
 class IngestDocumentRequest(BaseModel):
     """Versioned PDF upload contract for trusted local pipeline callers."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     contract_version: Literal["1.0", "2.0"] = "1.0"
-    filename: str = Field(min_length=5, max_length=240, pattern=r"^[^/\\]+\.[Pp][Dd][Ff]$")
+    filename: str = Field(min_length=5, max_length=240, pattern=r"^[^/\\]+\.(?i:pdf|jpe?g|png)$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     content_base64: str = Field(min_length=8)
     application_id: str | None = Field(default=None, min_length=3, max_length=200)
@@ -101,7 +155,7 @@ class IngestBatchRequest(BaseModel):
     batch_id: str | None = Field(
         default=None, min_length=3, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]+$"
     )
-    documents: tuple[IngestDocumentRequest, ...] = Field(min_length=1)
+    documents: tuple[IngestDocumentRequest, ...] = Field(min_length=1, max_length=10000)
 
     @model_validator(mode="after")
     def consistent_contract(self) -> IngestBatchRequest:
@@ -119,6 +173,8 @@ class IngestBatchResponse(BaseModel):
 
     contract_version: Literal["1.0", "2.0"] = "1.0"
     documents: tuple[IngestDocumentResponse, ...] = Field(min_length=1)
+    document_set_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    document_set_policy_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class IngestionActivityEvent(BaseModel):
@@ -152,7 +208,7 @@ class ExtractResponse(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    contract_version: Literal["1.0", "2.0"] = "1.0"
+    contract_version: Literal["1.0", "2.0", "2.1"] = "1.0"
     question: str
     figures: tuple[ExtractedFigure, ...] = Field(min_length=1)
     notes: tuple[str, ...] = ()

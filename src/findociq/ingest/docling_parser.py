@@ -38,6 +38,22 @@ class TableExtractionFailed(RuntimeError):
     """Raised when the fast-path table detector cannot inspect a digital page."""
 
 
+def rapidocr_parameters(device: str) -> dict[str, object]:
+    """Explicit CUDA must never silently become CPU OCR."""
+    if device != "cuda":
+        return {}
+    try:
+        import torch
+    except ImportError as error:
+        raise RuntimeError("ocr_cuda_unavailable") from error
+    if not torch.cuda.is_available():
+        raise RuntimeError("ocr_cuda_unavailable")
+    return {
+        "EngineConfig.torch.use_cuda": True,
+        "EngineConfig.torch.cuda_ep_cfg.device_id": 0,
+    }
+
+
 class DocumentParser:
     """Parse a PDF while preserving block geometry and page routing decisions."""
 
@@ -149,29 +165,24 @@ class DocumentParser:
 
         try:
             device = AcceleratorDevice(self.config.accelerator_device)
-            rapidocr_params = (
-                {
-                    "EngineConfig.torch.use_cuda": True,
-                    "EngineConfig.torch.cuda_ep_cfg.device_id": 0,
-                }
-                if device is AcceleratorDevice.CUDA
-                else {}
-            )
+            rapidocr_params = rapidocr_parameters(self.config.accelerator_device)
             pipeline_options = PdfPipelineOptions(
                 accelerator_options=AcceleratorOptions(device=device),
                 document_timeout=timeout_seconds,
+                # Docling otherwise clears OCR cells before returning. Keep them
+                # transiently so the adapter can preserve physical line breaks.
+                generate_parsed_pages=True,
                 ocr_options=RapidOcrOptions(
                     backend=self.config.ocr_backend,
                     rapidocr_params=rapidocr_params,
                 ),
             )
             converter = DocumentConverter(
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-                }
+                format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
             )
             converted = converter.convert(path)
             docling_document = converted.document
+            parsed_pages = {page.page_no + 1: page for page in converted.pages}
             items = docling_document.iterate_items()
             by_page: dict[int, list[DocumentBlock]] = {
                 decision.page_number: [] for decision in decisions
@@ -190,6 +201,25 @@ class DocumentParser:
                 bbox = source.bbox
                 page_size = docling_document.pages[page_number].size
                 block_type = self._docling_block_type(label)
+                if block_type is not BlockType.TABLE:
+                    from findociq.ingest.ocr_lines import OcrLine, restore_lines
+
+                    parsed_page = parsed_pages.get(page_number)
+                    cells = getattr(getattr(parsed_page, "parsed_page", None), "textline_cells", ())
+                    text = restore_lines(
+                        text,
+                        self._docling_bbox(bbox, float(page_size.height)),
+                        tuple(
+                            OcrLine(
+                                text=cell.text,
+                                bbox=self._docling_bbox(
+                                    cell.rect.to_bounding_box(), float(page_size.height)
+                                ),
+                            )
+                            for cell in cells
+                            if cell.from_ocr
+                        ),
+                    )
                 by_page[page_number].append(
                     DocumentBlock(
                         block_type=block_type,
@@ -302,6 +332,8 @@ class DocumentParser:
 
     @staticmethod
     def _table_rectangles(page: fitz.Page) -> list[tuple[fitz.Rect, str]]:
+        from findociq.ingest.ruled_tables import activity_tables, dated_tables
+
         try:
             tables = page.find_tables().tables
         except (AttributeError, RuntimeError) as error:
@@ -322,7 +354,10 @@ class DocumentParser:
             markdown_rows = [header, separator, *padded[1:]]
             markdown = "\n".join("| " + " | ".join(row) + " |" for row in markdown_rows)
             results.append((fitz.Rect(table.bbox), markdown))
-        return results
+        recovered = dated_tables(page) + activity_tables(page)
+        return [
+            item for item in results if not any(item[0].intersects(r[0]) for r in recovered)
+        ] + recovered
 
     @staticmethod
     def _infer_text_type(text: str) -> BlockType:

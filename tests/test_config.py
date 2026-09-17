@@ -23,9 +23,10 @@ def test_ingestion_config_loads_into_nested_dataclasses() -> None:
     assert config.config_hash == config.config_hash
 
 
-def test_production_ingestion_config_keeps_raw_pages_off_models() -> None:
+def test_docker_uses_gpu_ocr_without_enabling_raw_page_generation() -> None:
     config = IngestionConfig.from_yaml(ROOT / "configs/ingestion/docker.yaml")
-    assert config.parser.accelerator_device == "cpu"
+    assert config.parser.accelerator_device == "cuda"
+    assert config.gpu_lease.enabled is True
     assert config.vision.enabled is False
 
 

@@ -1,0 +1,17 @@
+version: document-classifier-v3
+patterns:
+  financial_information_report: ['proprietary data and information service', 'third.party financial information report']
+  pan: ['permanent account number', 'income tax department[\s\S]{0,100}government of india']
+  aadhaar: ['unique identification authority', '\b(?:aadhaar|aadhar)\s+(?:card|number)\b', '^\s*(?:aadhaar|aadhar)\s*$']
+  gst: ['goods and services tax[\s\S]{0,100}registration', '\bGST REG-06\b', 'gst registration']
+  udyam: ['udyam registration', 'udyog aadhaar memorandum']
+  incorporation: ['certificate of incorporation']
+  agreement: ['limited liability partnership agreement', '\bllp agreement\b', 'partnership deed']
+  bank_statement: ['statement of account', 'bank statement', 'account statement']
+  utility_bill: ['electricity bill', 'electricity charges', 'energy charges', 'water bill']
+  audited_financials: ['independent auditor', 'auditor.s report', 'audited financial statements']
+  financial_statement: ['balance sheet', 'statement of profit', 'profit and loss']
+  payroll: ['payroll register', 'employee register', 'employee headcount certificate']
+  valuation: ['valuation report', 'collateral valuation']
+  tax_return: ['income tax return', 'ITR acknowledgement', 'form itr-']
+  no_dues: ['no dues certificate', 'no-dues certificate']

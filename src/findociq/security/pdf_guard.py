@@ -31,9 +31,12 @@ class PdfSafetyScanner:
         self._reject_active_content(path)
         version = self._version()
         try:
-            with socket.create_connection(
-                (self.host, self.port), timeout=self.timeout_seconds
-            ) as connection, path.open("rb") as source:
+            with (
+                socket.create_connection(
+                    (self.host, self.port), timeout=self.timeout_seconds
+                ) as connection,
+                path.open("rb") as source,
+            ):
                 connection.sendall(b"zINSTREAM\0")
                 while block := source.read(1024 * 1024):
                     connection.sendall(len(block).to_bytes(4, "big") + block)
@@ -62,6 +65,14 @@ class PdfSafetyScanner:
 
     @staticmethod
     def _reject_active_content(path: Path) -> None:
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png"}:
+            from findociq.ingest.image_input import validate_image
+
+            try:
+                validate_image(path.read_bytes(), path.suffix)
+            except ValueError as error:
+                raise UnsafeDocumentError(str(error)) from error
+            return
         try:
             document = fitz.open(path)
         except Exception as error:

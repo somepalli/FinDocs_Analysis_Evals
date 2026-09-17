@@ -66,19 +66,13 @@ class ReasoningPipeline:
         ) as attributes:
             if self.config.passes == 1:
                 with self.observer.span(context, "reasoning.single_pass"):
-                    answer = self._single.reason(
-                        question, hits, trace_context=context
-                    )
+                    answer = self._single.reason(question, hits, trace_context=context)
                 attributes["citation_count"] = len(answer.citations)
                 return ReasoningRun(mode=self.config.name, question=question, answer=answer)
             with self.observer.span(context, "reasoning.pass1"):
-                extraction = self._pass1.extract(
-                    question, hits, trace_context=context
-                )
+                extraction = self._pass1.extract(question, hits, trace_context=context)
             with self.observer.span(context, "reasoning.pass2"):
-                answer = self._pass2.reason(
-                    question, extraction, trace_context=context
-                )
+                answer = self._pass2.reason(question, extraction, trace_context=context)
             attributes["citation_count"] = len(answer.citations)
             return ReasoningRun(
                 mode=self.config.name,

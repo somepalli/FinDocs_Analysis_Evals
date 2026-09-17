@@ -107,6 +107,22 @@ class RetrievalPipeline:
         self.observer = observer or TraceObserver()
         self._cache: OrderedDict[str, tuple[RetrievalHit, ...]] = OrderedDict()
 
+    def release_models(self) -> None:
+        """Release retrieval weights before waking vLLM."""
+        from gc import collect
+
+        for adapter in (self.embedder, self.reranker):
+            release = getattr(adapter, "release", None)
+            if callable(release):
+                release()
+        collect()
+        try:
+            import torch
+        except ImportError:
+            return
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def retrieve(
         self,
         query: str,

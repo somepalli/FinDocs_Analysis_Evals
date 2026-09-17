@@ -6,7 +6,7 @@ router:
 parser:
   prefer_docling: true
   fail_on_vision_required: true
-  accelerator_device: cpu
+  accelerator_device: cuda
   ocr_backend: torch
 vision:
   enabled: false

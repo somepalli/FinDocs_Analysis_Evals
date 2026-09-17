@@ -17,6 +17,13 @@ COPY evals ./evals
 COPY configs ./configs
 RUN uv sync --frozen --no-dev --extra api --extra docling --extra gpu --extra retrieval --extra observability
 
+# RapidOCR imports the OpenCV wheel, which requires these shared libraries
+# even when OCR runs on CPU without a graphical display.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxcb1 libgl1 libglib2.0-0t64 \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -c "import cv2; from rapidocr import RapidOCR; from docling.document_converter import DocumentConverter"
+
 EXPOSE 8989
 
 CMD ["findociq-api", "--host", "0.0.0.0", "--port", "8989", "--config", "configs/api/docker.yaml"]

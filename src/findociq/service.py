@@ -8,11 +8,14 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from findociq.ingest.config import IngestionConfig
+from findociq.ingest.gpu_lease import GpuLeaseConfig, VllmGpuLease
 from findociq.observability.recorder import TraceObserver, build_observer
 from findociq.observability.schema import ObservabilityConfig, TraceContext
+from findociq.reason.evidence_gate import BorrowerEvidenceGate, EvidenceInsufficient, EvidencePolicy
 from findociq.reason.generation import GenerationConfig, build_generation_client
 from findociq.reason.pipeline import ReasoningPipeline, ReasoningPipelineConfig
-from findociq.reason.schema import ReasoningRun
+from findociq.reason.schema import Pass1Extraction, ReasoningRun
 from findociq.retrieve.pipeline import (
     RetrievalPipeline,
     RetrievalRuntimeConfig,
@@ -35,6 +38,7 @@ class ApiConfig(BaseModel):
     two_pass_config: Path
     observability_config: Path
     default_mode: ReasoningMode = "two_pass"
+    evidence_config: Path = Path("configs/evidence/borrower.yaml")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ApiConfig:
@@ -52,6 +56,9 @@ class ApiConfig(BaseModel):
             "observability_config",
         ):
             payload[key] = (source.parent / payload[key]).resolve()
+        payload["evidence_config"] = (
+            source.parent / payload.get("evidence_config", "../evidence/borrower.yaml")
+        ).resolve()
         return cls(**payload)
 
 
@@ -64,11 +71,111 @@ class FinDocIQService:
         reasoning: dict[ReasoningMode, ReasoningPipeline],
         observer: TraceObserver | None = None,
         default_mode: ReasoningMode = "two_pass",
+        gpu_lease: VllmGpuLease | None = None,
+        evidence_policy: EvidencePolicy | None = None,
     ) -> None:
         self.retrieval = retrieval
         self.reasoning = reasoning
         self.observer = observer or TraceObserver()
         self.default_mode = default_mode
+        self.gpu_lease = gpu_lease or VllmGpuLease(GpuLeaseConfig())
+        self.evidence_policy = evidence_policy
+
+    def assess_metrics(
+        self,
+        metric_ids: tuple[str, ...],
+        document_ids: tuple[str, ...],
+        *,
+        application_id: str,
+        command_id: str,
+        interpretations=(),
+        interpretation_command_id=None,
+        assessment_date=None,
+    ):
+        from findociq.reason.classification import classify_sections
+        from findociq.reason.interpretations import interpretation_options
+
+        policy = self.evidence_policy
+        if policy is None:
+            raise RuntimeError("evidence_policy_unavailable")
+        if any(
+            metric not in policy.metrics and metric not in policy.operands for metric in metric_ids
+        ):
+            raise EvidenceInsufficient("metric_not_allowed")
+        context = TraceContext.for_query(
+            "Evidence readiness",
+            operation="evidence.assessment",
+            question_id=command_id,
+            config_hash=policy.policy_hash,
+        )
+        with self.observer.span(
+            context,
+            "evidence.assessment",
+            {"document_count": len(document_ids), "metric_count": len(metric_ids)},
+        ):
+            chunks = self.retrieval.store.scoped_chunks(
+                document_ids, application_id, max_chunks=policy.max_chunks
+            )
+            if any(
+                link.document_id not in document_ids
+                or not any(
+                    c.chunk_id == link.target_chunk_id
+                    and all(p.document_id == link.document_id for p in c.provenance)
+                    for c in chunks
+                )
+                for link in interpretations
+            ):
+                raise PermissionError("evidence_scope_violation")
+            return (
+                BorrowerEvidenceGate(
+                    policy,
+                    interpretations=interpretations,
+                    interpretation_command_id=interpretation_command_id,
+                    assessment_date=assessment_date,
+                    application_id=application_id,
+                ).assess(metric_ids, chunks),
+                classify_sections(chunks, policy.classification_policy),
+                interpretation_options(chunks, policy),
+            )
+
+    def extract_metrics(
+        self,
+        question: str,
+        metric_ids: tuple[str, ...],
+        document_ids: tuple[str, ...],
+        *,
+        application_id: str | None = None,
+        question_id: str | None = None,
+    ) -> Pass1Extraction:
+        if self.evidence_policy is None:
+            raise RuntimeError("evidence policy unavailable")
+        context = TraceContext.for_query(
+            question,
+            operation="evidence.selection",
+            question_id=question_id,
+            config_hash=self.evidence_policy.policy_hash,
+        )
+        with self.observer.span(
+            context,
+            "evidence.selection",
+            {"document_count": len(document_ids), "metric_count": len(metric_ids)},
+        ):
+            try:
+                chunks = self.retrieval.store.scoped_chunks(
+                    document_ids, application_id, max_chunks=self.evidence_policy.max_chunks
+                )
+            except ValueError as error:
+                code = str(error)
+                if code not in {
+                    "evidence_document_scope_missing",
+                    "evidence_inventory_limit",
+                    "evidence_document_missing",
+                }:
+                    code = "evidence_inventory_invalid"
+                raise EvidenceInsufficient(code) from error
+            gate = BorrowerEvidenceGate(self.evidence_policy, application_id=application_id)
+            figures = tuple(gate.extract(metric, chunks) for metric in metric_ids)
+            return Pass1Extraction(question=question, figures=figures)
 
     def query(
         self,
@@ -86,13 +193,18 @@ class FinDocIQService:
             operation=f"api:query:{mode}",
             question_id=question_id,
         )
-        with self.observer.span(context, "api.query", {"mode": mode}):
-            hits = self.retrieval.retrieve(
-                question,
-                trace_context=context,
-                document_ids=document_ids,
-                application_id=application_id,
-            )
+        with self.gpu_lease.operation(), self.observer.span(context, "api.query", {"mode": mode}):
+            with self.gpu_lease.ingestion_batch():
+                try:
+                    hits = self.retrieval.retrieve(
+                        question,
+                        trace_context=context,
+                        document_ids=document_ids,
+                        application_id=application_id,
+                    )
+                finally:
+                    if self.gpu_lease.config.enabled:
+                        self.retrieval.release_models()
             return self.reasoning[mode].run(question, hits, trace_context=context)
 
 
@@ -112,4 +224,12 @@ def build_service(config: ApiConfig) -> FinDocIQService:
             ReasoningPipelineConfig.from_yaml(config.two_pass_config), client, observer
         ),
     }
-    return FinDocIQService(retrieval, pipelines, observer, config.default_mode)
+    lease = VllmGpuLease(IngestionConfig.from_yaml(config.ingestion_config).gpu_lease)
+    return FinDocIQService(
+        retrieval,
+        pipelines,
+        observer,
+        config.default_mode,
+        gpu_lease=lease,
+        evidence_policy=EvidencePolicy.load(config.evidence_config),
+    )

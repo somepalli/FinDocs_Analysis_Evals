@@ -91,9 +91,7 @@ class Pass2Reasoner:
         return ReasonedAnswer(answer=selection.answer, citations=citations)
 
     @staticmethod
-    def _validate_selection(
-        raw: str, allowed: dict[str, SourceCitation]
-    ) -> Pass2EvidenceSelection:
+    def _validate_selection(raw: str, allowed: dict[str, SourceCitation]) -> Pass2EvidenceSelection:
         selection = Pass2EvidenceSelection.model_validate(_parse_json(raw))
         unknown = set(selection.evidence_ids).difference(allowed)
         if unknown:
@@ -109,15 +107,12 @@ class Pass2Reasoner:
         question: str,
     ) -> None:
         figures = {
-            f"evidence_{index}": figure
-            for index, figure in enumerate(extraction.figures, start=1)
+            f"evidence_{index}": figure for index, figure in enumerate(extraction.figures, start=1)
         }
         selected = tuple(figures[item] for item in selection.evidence_ids)
         evidence_text = " ".join(
             " ".join(
-                value
-                for value in (figure.label, figure.value, figure.unit, figure.period)
-                if value
+                value for value in (figure.label, figure.value, figure.unit, figure.period) if value
             )
             for figure in selected
         )

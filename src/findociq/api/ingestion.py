@@ -171,9 +171,7 @@ class DocumentIngestionService:
             temporary = folder / f".{request.filename}.upload"
             temporary.write_bytes(content)
             temporary.replace(path)
-            _emit(
-                progress, "parsing_document", f"Parsing and OCR: {request.filename}", **details
-            )
+            _emit(progress, "parsing_document", f"Parsing and OCR: {request.filename}", **details)
             parsed = self._parse(path)
         if (
             self.production_policy is not None
@@ -207,10 +205,16 @@ class DocumentIngestionService:
         if not chunks:
             raise DocumentIngestionError("document produced no evidence chunks")
         dlp_receipts: list[dict[str, object]] = []
-        if self.dlp is not None:
+        dlp = self.dlp
+        if dlp is None and Path(request.filename).suffix.lower() in {".jpg", ".jpeg", ".png"}:
+            image_policy = ProductionGuardrailPolicy.from_yaml(
+                os.getenv("FINDOCIQ_GUARDRAIL_POLICY", "configs/guardrails/production.yaml")
+            )
+            dlp = LocalDlpProvider(image_policy.dlp, image_policy.policy_hash)
+        if dlp is not None:
             protected = []
             for chunk in chunks:
-                redacted, receipts = _redact_chunk(chunk, self.dlp)
+                redacted, receipts = _redact_chunk(chunk, dlp)
                 dlp_receipts.extend(receipts)
                 protected.append(redacted)
             chunks = tuple(protected)
@@ -309,7 +313,14 @@ class DocumentIngestionService:
         )
         if len(content) > limit:
             raise DocumentIngestionError("document exceeds the configured size limit")
-        if not content.startswith(b"%PDF-"):
+        if Path(request.filename).suffix.lower() in {".jpg", ".jpeg", ".png"}:
+            from findociq.ingest.image_input import validate_image
+
+            try:
+                validate_image(content, Path(request.filename).suffix)
+            except ValueError as error:
+                raise DocumentIngestionError(str(error)) from error
+        elif not content.startswith(b"%PDF-"):
             raise DocumentIngestionError("document is not a PDF")
         if sha256(content).hexdigest() != request.sha256:
             raise DocumentIngestionError("document SHA-256 does not match content")
@@ -334,7 +345,9 @@ class DocumentIngestionService:
                 for index, (request, content) in enumerate(
                     zip(requests, contents, strict=True), start=1
                 ):
-                    candidate = root / f"{index}-{request.sha256}.pdf"
+                    candidate = (
+                        root / f"{index}-{request.sha256}{Path(request.filename).suffix.lower()}"
+                    )
                     candidate.write_bytes(content)
                     try:
                         receipts[request.sha256] = self.scanner.scan(candidate)
@@ -359,6 +372,8 @@ class DocumentIngestionService:
             return
         maximum = self.production_policy.resources.max_pages
         for content in contents:
+            if not content.startswith(b"%PDF-"):
+                continue  # Images were validated above and represent one page.
             try:
                 with fitz.open(stream=content, filetype="pdf") as document:
                     if document.page_count > maximum:
@@ -369,6 +384,10 @@ class DocumentIngestionService:
                 raise DocumentIngestionError("malformed_pdf") from error
 
     def _parse(self, path: Path) -> ParsedDocument:
+        if path.suffix.lower() in {".jpg", ".jpeg", ".png"}:
+            from findociq.ingest.image_input import parse_image
+
+            return parse_image(path, self._parse)
         if self.production_policy is None:
             return self.parser.parse(path)
         try:
@@ -447,6 +466,16 @@ class _SwitchingVisionExtractor(VisionPageExtractor):
             )
 
 
+def validate_parser_security(config: IngestionConfig, *, production_enabled: bool) -> None:
+    # Local OCR has the same data boundary on CPU and CUDA. Raw-page generative
+    # vision is a separate capability and still requires a redaction boundary.
+    if production_enabled and config.vision.enabled:
+        raise RuntimeError(
+            "production ingestion requires disabled raw-page vision; "
+            "enable vision only behind a pre-model image-redaction boundary"
+        )
+
+
 def build_ingestion_service(
     *, storage_root: Path, ingestion_config: Path, index_config: Path, retrieval_config: Path
 ) -> DocumentIngestionService:
@@ -461,13 +490,7 @@ def build_ingestion_service(
         if production_enabled
         else None
     )
-    if policy is not None and (
-        config.parser.accelerator_device != "cpu" or config.vision.enabled
-    ):
-        raise RuntimeError(
-            "production ingestion requires CPU parsing and disabled raw-page vision; "
-            "enable vision only behind a pre-model image-redaction boundary"
-        )
+    validate_parser_security(config, production_enabled=policy is not None)
     encrypted_store = None
     if policy is not None:
         key_file = os.getenv("FINDOCIQ_DOCUMENT_MASTER_KEY_FILE")

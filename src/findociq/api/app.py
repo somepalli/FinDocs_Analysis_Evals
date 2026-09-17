@@ -19,6 +19,12 @@ from findociq.api.ingestion import (
     build_ingestion_service,
 )
 from findociq.api.schema import (
+    DocumentSetExtractRequest,
+    DocumentSetRequest,
+    DocumentSetResponse,
+    DocumentSetValidationRequest,
+    DocumentSetValidationResponse,
+    EvidenceAssessmentResponse,
     ExtractRequest,
     ExtractResponse,
     HealthResponse,
@@ -33,7 +39,10 @@ from findociq.api.schema import (
     RetentionDeleteRequest,
     RetentionDeleteResponse,
 )
+from findociq.reason.evidence_gate import EvidenceInsufficient
 from findociq.security.auth import ServiceJwtVerifier
+from findociq.security.document_sets import DocumentSetStore, freeze
+from findociq.security.local_registry import LocalDocumentRegistry
 from findociq.security.policy import ProductionGuardrailPolicy
 from findociq.security.registry import (
     DocumentRecord,
@@ -83,7 +92,59 @@ def create_app(
     app.state.production_enabled = production_enabled
     app.state.production_policy = production_policy
     app.state.service_jwt_verifier = service_jwt_verifier
-    app.state.document_registry = document_registry or InMemoryDocumentRegistry()
+    local_root = os.getenv("FINDOCIQ_DOCUMENT_ROOT")
+    app.state.document_registry = document_registry or (
+        LocalDocumentRegistry(Path(local_root) / "ownership.sqlite")
+        if local_root
+        else InMemoryDocumentRegistry()
+    )
+    app.state.document_sets = DocumentSetStore(
+        dsn=read_secret("FINDOCIQ_DATABASE_URL")
+        if production_enabled and durable_security_store
+        else None,
+        path=Path(local_root) / "document_sets.sqlite" if local_root else None,
+    )
+
+    def set_policy_hash():
+        if app.state.production_enabled:
+            return app.state.production_policy.policy_hash
+        return sha256(b"findociq-local-document-ownership-v1").hexdigest()
+
+    def authorize_set(application_id, authorization, correlation, token, role="document_extract"):
+        if app.state.production_enabled:
+            authorize(authorization, correlation, required_role=role, application_id=application_id)
+        else:
+            expected = app.state.ingest_token or os.getenv("FINDOCIQ_INGEST_TOKEN")
+            if not expected or not token or not secrets.compare_digest(expected, token):
+                raise HTTPException(401, "valid ingestion token required")
+
+    @app.post("/v1/document-sets", response_model=DocumentSetResponse)
+    def create_document_set(
+        payload: DocumentSetRequest,
+        authorization: Annotated[str | None, Header()] = None,
+        x_correlation_id: Annotated[str | None, Header()] = None,
+        x_findociq_ingest_token: Annotated[str | None, Header()] = None,
+    ):
+        authorize_set(
+            payload.application_id,
+            authorization,
+            x_correlation_id,
+            x_findociq_ingest_token,
+            "document_ingest",
+        )
+        try:
+            record = app.state.document_sets.put(
+                freeze(payload.application_id, payload.document_ids, set_policy_hash()),
+                app.state.document_registry.owns,
+            )
+        except PermissionError as error:
+            raise HTTPException(403, "evidence_scope_violation") from error
+        return DocumentSetResponse(
+            application_id=record.application_id,
+            document_set_id=record.set_id,
+            document_count=len(record.document_ids),
+            policy_hash=record.policy_hash,
+        )
 
     def authorize(
         authorization: str | None,
@@ -135,6 +196,100 @@ def create_app(
             request.app.state.ingestion_service = current
         return current
 
+    @app.post("/v1/document-sets/validate", response_model=DocumentSetValidationResponse)
+    def validate_document_set(
+        payload: DocumentSetValidationRequest,
+        query_service: Annotated[FinDocIQService, Depends(get_service)],
+        authorization: Annotated[str | None, Header()] = None,
+        x_correlation_id: Annotated[str | None, Header()] = None,
+        x_findociq_ingest_token: Annotated[str | None, Header()] = None,
+    ):
+        """Recheck current ownership and policy without running extraction or OCR."""
+        authorize_set(
+            payload.application_id, authorization, x_correlation_id, x_findociq_ingest_token
+        )
+        try:
+            record = app.state.document_sets.get(
+                payload.document_set_id,
+                payload.application_id,
+                set_policy_hash(),
+                app.state.document_registry.owns,
+            )
+            policy = query_service.evidence_policy
+            if policy is None:
+                raise HTTPException(503, "evidence_policy_unavailable")
+            return DocumentSetValidationResponse(
+                application_id=record.application_id,
+                document_set_id=record.set_id,
+                document_count=len(record.document_ids),
+                policy_hash=record.policy_hash,
+                evidence_policy_hash=policy.policy_hash,
+            )
+        except PermissionError as error:
+            raise HTTPException(403, "evidence_scope_violation") from error
+        except ValueError as error:
+            raise HTTPException(422, "evidence_inventory_invalid") from error
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise HTTPException(503, "evidence_validation_unavailable") from error
+
+    @app.post("/v1/evidence-assessments", response_model=EvidenceAssessmentResponse)
+    def assess_evidence(
+        payload: DocumentSetExtractRequest,
+        query_service: Annotated[FinDocIQService, Depends(get_service)],
+        authorization: Annotated[str | None, Header()] = None,
+        x_correlation_id: Annotated[str | None, Header()] = None,
+        x_findociq_ingest_token: Annotated[str | None, Header()] = None,
+    ):
+        authorize_set(
+            payload.application_id, authorization, x_correlation_id, x_findociq_ingest_token
+        )
+        try:
+            record = app.state.document_sets.get(
+                payload.document_set_id,
+                payload.application_id,
+                set_policy_hash(),
+                app.state.document_registry.owns,
+            )
+            policy = query_service.evidence_policy
+            if policy is None:
+                raise HTTPException(503, "evidence_policy_unavailable")
+            if any(
+                metric not in policy.metrics and metric not in policy.operands
+                for metric in payload.metric_ids
+            ):
+                raise HTTPException(422, "metric_not_allowed")
+            if app.state.production_enabled:
+                for metric in payload.metric_ids:
+                    app.state.production_policy.extraction_question(metric)
+            fields, classifications, interpretation_options = query_service.assess_metrics(
+                payload.metric_ids,
+                record.document_ids,
+                application_id=record.application_id,
+                command_id=payload.command_id,
+                interpretations=payload.interpretations,
+                interpretation_command_id=payload.interpretation_command_id,
+                assessment_date=payload.assessment_date,
+            )
+            return EvidenceAssessmentResponse(
+                application_id=payload.application_id,
+                document_set_id=record.set_id,
+                policy_hash=policy.policy_hash,
+                interpretation_command_id=payload.interpretation_command_id,
+                fields=fields,
+                classifications=classifications,
+                interpretation_options=interpretation_options,
+            )
+        except PermissionError as error:
+            raise HTTPException(403, "evidence_scope_violation") from error
+        except ValueError as error:
+            raise HTTPException(422, "evidence_inventory_invalid") from error
+        except HTTPException:
+            raise
+        except Exception as error:
+            raise HTTPException(503, "evidence_assessment_unavailable") from error
+
     @app.get("/healthz", response_model=HealthResponse, response_model_exclude_none=True)
     def health() -> HealthResponse:
         return HealthResponse(
@@ -169,11 +324,51 @@ def create_app(
 
     @app.post("/extract", response_model=ExtractResponse, response_model_exclude_none=True)
     def extract(
-        payload: ExtractRequest | ProductionExtractRequest,
+        payload: ExtractRequest | ProductionExtractRequest | DocumentSetExtractRequest,
         query_service: Annotated[FinDocIQService, Depends(get_service)],
         authorization: Annotated[str | None, Header()] = None,
         x_correlation_id: Annotated[str | None, Header()] = None,
+        x_findociq_ingest_token: Annotated[str | None, Header()] = None,
     ) -> ExtractResponse:
+        if isinstance(payload, DocumentSetExtractRequest):
+            authorize_set(
+                payload.application_id, authorization, x_correlation_id, x_findociq_ingest_token
+            )
+            if payload.interpretations or payload.interpretation_command_id:
+                raise HTTPException(422, "use_evidence_assessments_for_interpretations")
+            try:
+                record = app.state.document_sets.get(
+                    payload.document_set_id,
+                    payload.application_id,
+                    set_policy_hash(),
+                    app.state.document_registry.owns,
+                )
+                if app.state.production_enabled:
+                    for metric in payload.metric_ids:
+                        app.state.production_policy.extraction_question(metric)
+                extraction = query_service.extract_metrics(
+                    "Application-scoped metric extraction",
+                    payload.metric_ids,
+                    record.document_ids,
+                    application_id=payload.application_id,
+                    question_id=payload.command_id,
+                )
+            except PermissionError as error:
+                raise HTTPException(403, "evidence_scope_violation") from error
+            except EvidenceInsufficient as error:
+                raise HTTPException(422, error.code) from error
+            except ValueError as error:
+                raise HTTPException(422, "metric_not_allowed") from error
+            except Exception as error:
+                raise HTTPException(503, "evidence_extraction_unavailable") from error
+            return ExtractResponse(
+                contract_version="2.1",
+                question=extraction.question,
+                figures=extraction.figures,
+                application_id=payload.application_id,
+                command_id=payload.command_id,
+                policy_hash=set_policy_hash(),
+            )
         if app.state.production_enabled:
             if not isinstance(payload, ProductionExtractRequest):
                 raise HTTPException(422, "production extraction requires contract version 2.0")
@@ -190,7 +385,7 @@ def create_app(
                 payload.document_ids,
                 policy_hash=policy.policy_hash,
             ):
-                raise HTTPException(403, "documents do not belong to this application")
+                raise HTTPException(403, "evidence_scope_violation")
             try:
                 question = "\n".join(
                     policy.extraction_question(metric_id) for metric_id in payload.metric_ids
@@ -208,12 +403,39 @@ def create_app(
             document_ids = payload.document_ids
             application_id = None
         try:
+            metric_ids = (
+                payload.metric_ids
+                if isinstance(payload, ProductionExtractRequest)
+                else ((payload.metric_id,) if payload.metric_id else ())
+            )
+            if metric_ids:
+                extraction = query_service.extract_metrics(
+                    question,
+                    metric_ids,
+                    document_ids,
+                    application_id=application_id,
+                    question_id=question_id,
+                )
+                return ExtractResponse(
+                    contract_version="2.0" if app.state.production_enabled else "1.0",
+                    question=extraction.question,
+                    figures=extraction.figures,
+                    application_id=application_id,
+                    command_id=question_id if app.state.production_enabled else None,
+                    policy_hash=app.state.production_policy.policy_hash
+                    if app.state.production_enabled
+                    else None,
+                )
             kwargs = {"mode": "two_pass", "question_id": question_id}
             if document_ids:
                 kwargs["document_ids"] = document_ids
             if application_id:
                 kwargs["application_id"] = application_id
             result = query_service.query(question, **kwargs)
+        except EvidenceInsufficient as error:
+            raise HTTPException(status_code=422, detail=error.code) from error
+        except PermissionError as error:
+            raise HTTPException(status_code=403, detail="evidence_scope_violation") from error
         except (RuntimeError, OSError, ValueError) as error:
             LOGGER.exception("structured extraction failed")
             raise HTTPException(
@@ -257,8 +479,10 @@ def create_app(
             )
         else:
             expected = app.state.ingest_token or os.getenv("FINDOCIQ_INGEST_TOKEN")
-            if not expected or not x_findociq_ingest_token or not secrets.compare_digest(
-                expected, x_findociq_ingest_token
+            if (
+                not expected
+                or not x_findociq_ingest_token
+                or not secrets.compare_digest(expected, x_findociq_ingest_token)
             ):
                 raise HTTPException(401, "valid ingestion token required")
         try:
@@ -290,8 +514,10 @@ def create_app(
             )
         else:
             expected = app.state.ingest_token or os.getenv("FINDOCIQ_INGEST_TOKEN")
-            if not expected or not x_findociq_ingest_token or not secrets.compare_digest(
-                expected, x_findociq_ingest_token
+            if (
+                not expected
+                or not x_findociq_ingest_token
+                or not secrets.compare_digest(expected, x_findociq_ingest_token)
             ):
                 raise HTTPException(401, "valid ingestion token required")
         registry: IngestionActivityRegistry = app.state.activity_registry
@@ -305,14 +531,23 @@ def create_app(
         try:
             documents = tuple(
                 _register_document(app, document)
-                for document in document_service.ingest_batch(
-                    payload.documents, progress=report
-                )
+                for document in document_service.ingest_batch(payload.documents, progress=report)
             )
             if payload.batch_id:
                 registry.finish(payload.batch_id, "completed")
+            record = None
+            if application_id and all(d.application_id == application_id for d in documents):
+                record = app.state.document_sets.put(
+                    freeze(
+                        application_id, tuple(d.document_id for d in documents), set_policy_hash()
+                    ),
+                    app.state.document_registry.owns,
+                )
             return IngestBatchResponse(
-                contract_version=payload.contract_version, documents=documents
+                contract_version=payload.contract_version,
+                documents=documents,
+                document_set_id=record.set_id if record else None,
+                document_set_policy_hash=record.policy_hash if record else None,
             )
         except (DocumentIngestionError, ValidationError) as error:
             if payload.batch_id:
@@ -351,8 +586,10 @@ def create_app(
             )
         else:
             expected = app.state.ingest_token or os.getenv("FINDOCIQ_INGEST_TOKEN")
-            if not expected or not x_findociq_ingest_token or not secrets.compare_digest(
-                expected, x_findociq_ingest_token
+            if (
+                not expected
+                or not x_findociq_ingest_token
+                or not secrets.compare_digest(expected, x_findociq_ingest_token)
             ):
                 raise HTTPException(401, "valid ingestion token required")
         snapshot = app.state.activity_registry.snapshot(batch_id, after=max(0, after))
@@ -408,6 +645,16 @@ def _read_secret(name: str) -> str:
 
 def _register_document(app: FastAPI, response: IngestDocumentResponse) -> IngestDocumentResponse:
     if not app.state.production_enabled:
+        if response.application_id:
+            app.state.document_registry.register(
+                DocumentRecord(
+                    application_id=response.application_id,
+                    document_id=response.document_id,
+                    sha256=response.sha256,
+                    policy_hash=sha256(b"findociq-local-document-ownership-v1").hexdigest(),
+                    retained_until=datetime.now(UTC) + timedelta(days=30),
+                )
+            )
         return response
     if not response.application_id or not response.policy_hash:
         raise RuntimeError("production ingestion returned an unscoped receipt")
@@ -419,8 +666,7 @@ def _register_document(app: FastAPI, response: IngestDocumentResponse) -> Ingest
             document_id=response.document_id,
             sha256=response.sha256,
             policy_hash=response.policy_hash,
-            retained_until=datetime.now(UTC)
-            + timedelta(days=policy.retention.terminal_days),
+            retained_until=datetime.now(UTC) + timedelta(days=policy.retention.terminal_days),
         )
     )
     query_service: FinDocIQService | None = app.state.query_service

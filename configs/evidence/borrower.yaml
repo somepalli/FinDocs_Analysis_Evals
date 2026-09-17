@@ -1,0 +1,339 @@
+version: borrower-evidence-v12-noi-dscr
+reporting_scope_conflicts: ['\bsubsidiar(?:y|ies)\b', '\bgroup financial\b', '\bjoint ventures?\b']
+reporting_scope_patterns:
+  audit: ['independent auditor', 'auditors?[^\n]{0,8} report']
+  scope: ['we have audited the accompanying financial statements']
+  statements: ['balance sheet', 'profit and loss', 'statement of profit']
+  preparation: ['basis of preparation', 'basis of accounting', 'significant accounting policies']
+calculations:
+  ebitda_margin_pct: ebitda_margin_v1
+  dscr: dscr_noi_operating_components_total_v1
+  debt_to_equity: debt_equity_v1
+  debt_to_ebitda: debt_ebitda_v1
+  pat_crore: pat_pbt_net_tax_v1
+calculation_alternatives:
+  ebitda_margin_pct: [ebitda_margin_pbt_finance_da_v1]
+  debt_to_ebitda: [debt_ebitda_borrowings_v1, debt_ebitda_pbt_finance_da_v1, debt_ebitda_borrowings_pbt_v1]
+  debt_to_equity: [debt_equity_borrowings_v1, debt_equity_llp_borrowings_v1]
+  dscr: [dscr_noi_operating_components_schedule_v1, dscr_noi_pnl_components_total_v1, dscr_noi_pnl_components_schedule_v1, dscr_noi_reported_total_v1, dscr_noi_reported_schedule_v1]
+max_chunks: 20000
+region_patterns:
+  North: ['\bnorth\b', '\bdelhi\b', '\bharyana\b', '\bpunjab\b', '\bhimachal pradesh\b', '\buttarakhand\b', '\bchandigarh\b']
+  South: ['\bsouth\b', '\bkarnataka\b', '\btamil nadu\b', '\bkerala\b', '\btelangana\b', '\bandhra pradesh\b', '\bpuducherry\b']
+  West: ['\bwest\b', '\bmaharashtra\b', '\bgujarat\b', '\bgoa\b', '\brajasthan\b']
+  East: ['\beast\b', '\bwest bengal\b', '\bodisha\b', '\bbihar\b', '\bjharkhand\b']
+  Central: ['\bcentral\b', '\bmadhya pradesh\b', '\bchhattisgarh\b', '\buttar pradesh\b']
+document_types:
+  pan: ['permanent account number', 'income tax department']
+  financial_information_report: ['proprietary data and information service', 'third.party financial information report']
+  audited_financials: ['independent auditor', 'auditor.s report', 'audited financial', 'auditors. report']
+  financial_statement: ['balance sheet', 'statement of profit', 'profit and loss']
+  registration: ['udyam registration', 'registration certificate', 'certificate of incorporation', 'gst registration']
+  agreement: ['llp agreement', 'partnership deed', 'limited liability partnership agreement']
+  utility_bill: ['electricity bill', 'electricity charges', 'energy charges', 'consumer number']
+  no_dues: ['no dues', 'no-dues', 'no outstanding dues']
+  payroll: ['payroll register', 'employee register', 'employee headcount certificate']
+  valuation: ['valuation report', 'collateral valuation']
+entity_patterns:
+  # Audit-scope identity is also checked against the document owner.
+  - '(?im)^[ \t]*\|?[ \t]*(?:(?:legal name(?: of (?:business|enterprise))?|name of (?:enterprise|company|llp|borrower)|borrower name|consumer name)\s*(?:[:|]|\n)|To the (?:Partners|Members|Shareholders) of[ \t]+)[ \t]*([^|\n]{3,160})'
+  - '(?m)^[ \t]*((?:[A-Z][A-Za-z&.,()\-]*[ \t]+){1,16}(?:LIMITED|Limited|LTD\.?|Ltd\.?|LLP))[ \t]*$'
+  - '(?im)we have audited the accompanying financial statements of[ \t]+([^\n(]{3,160})'
+basis_patterns:
+  standalone: ['\bstandalone\b']
+  consolidated: ['\bconsolidated\b']
+basis_declaration_patterns:
+  - '(?m)^\s*(?:standalone|consolidated)\s+financial data\s*$'
+  - '(?m)^\s*(?:audited\s+)?(?:standalone|consolidated)\s+(?:financial statements|balance sheet|statement of profit|profit and loss)\b'
+  - '(?m)^\s*basis of preparation\s*[:|-]\s*(?:standalone|consolidated)\b'
+unit_patterns:
+  crore: ['(?:in|amounts? in|rs\.? in|inr in)\s+crores?', '\b(?:inr|rs\.?)\s+crores?\b']
+  lakh: ['(?:in|amounts? in|rs\.? in|inr in)\s+lakhs?', '\b(?:inr|rs\.?)\s+lakhs?\b']
+  million: ['(?:in|amounts? in)\s+millions?']
+  thousand: ['(?:in|amounts? in)\s+thousands?']
+  rupee: ['(?:in|amounts? in)\s+rupees', '\bamounts?\s*\(?rs\.?\)?', '\bamounts?\s+in\s+rs\.?(?!\s+(?:crores?|lakhs?|millions?|thousands?))']
+unit_to_crore: {crore: '1', lakh: '0.01', million: '0.1', thousand: '0.0001', rupee: '0.0000001'}
+operands:
+  operating_revenue_crore:
+    labels: ['revenue from operations', 'net revenue from operations']
+    sources: [audited_financials]
+    kind: money
+    require_period: true
+    require_basis: true
+  noi_crore:
+    sources: [audited_financials]
+    labels: ['net operating income', 'net operating profit after depreciation before interest and tax']
+    kind: money
+    require_period: true
+    require_basis: true
+  operating_expenses_crore:
+    sources: [audited_financials]
+    labels: ['total operating expenses including depreciation excluding finance costs and tax', 'operating expenses including depreciation excluding interest and tax']
+    kind: money
+    require_period: true
+    require_basis: true
+  pnl_total_expenses_crore:
+    sources: [audited_financials]
+    labels: ['total expenses', 'total expenditure', 'total expenses before tax']
+    required_context_labels: ['profit before tax', 'profit before taxation', 'profit/(loss) before tax']
+    kind: money
+    require_period: true
+    require_basis: true
+  all_loan_principal_due_crore:
+    sources: [audited_financials]
+    labels: ['total scheduled principal due on all loans for the year']
+    kind: money
+    require_period: true
+    require_basis: true
+  all_loan_interest_due_crore:
+    sources: [audited_financials]
+    labels: ['total interest due on all loans for the year']
+    kind: money
+    require_period: true
+    require_basis: true
+  additional_lease_service_crore:
+    sources: [audited_financials]
+    labels: ['mandatory lease payments not included in loan debt service for the year']
+    kind: money
+    require_period: true
+    require_basis: true
+  incorporation_date:
+    sources: [pan, registration]
+    labels: ['date of incorporation', 'date of incorporation / birth', 'date of incorporation/formation', 'incorporation date', 'date of registration/incorporation']
+    kind: date
+    require_period: false
+    require_basis: false
+  profit_on_sale_fixed_assets_crore:
+    sources: [audited_financials]
+    labels: ['profit on sale / disposal of fixed assets', 'profit on sale of fixed assets', 'gain on disposal of property plant and equipment']
+    kind: money
+    require_period: true
+    require_basis: true
+  other_income_crore:
+    sources: [audited_financials]
+    labels: ['other income']
+    kind: money
+    require_period: true
+    require_basis: true
+  interest_income_crore:
+    sources: [audited_financials]
+    labels: ['interest income']
+    kind: money
+    require_period: true
+    require_basis: true
+  current_assets_crore:
+    sources: [audited_financials]
+    labels: ['total current assets']
+    kind: money
+    require_period: true
+    require_basis: true
+  current_liabilities_crore:
+    sources: [audited_financials]
+    labels: ['total current liabilities']
+    kind: money
+    require_period: true
+    require_basis: true
+  inventory_crore:
+    sources: [audited_financials]
+    labels: ['inventories', 'inventory']
+    kind: money
+    require_period: true
+    require_basis: true
+  trade_receivables_crore:
+    sources: [audited_financials]
+    labels: ['trade receivables']
+    kind: money
+    require_period: true
+    require_basis: true
+  trade_payables_crore:
+    sources: [audited_financials]
+    labels: ['trade payables']
+    kind: money
+    require_period: true
+    require_basis: true
+  cash_equivalents_crore:
+    sources: [audited_financials]
+    labels: ['cash and cash equivalents']
+    kind: money
+    require_period: true
+    require_basis: true
+  operating_cash_flow_crore:
+    sources: [audited_financials]
+    labels: ['net cash generated from operating activities', 'net cash from operating activities', 'net cash flow from operating activities']
+    kind: money
+    require_period: true
+    require_basis: true
+  long_term_borrowings_crore:
+    sources: [audited_financials]
+    labels: ['long term borrowings', 'long-term borrowings', 'non-current borrowings']
+    kind: money
+    require_period: true
+    require_basis: true
+  short_term_borrowings_crore:
+    sources: [audited_financials]
+    labels: ['short term borrowings', 'short-term borrowings', 'current borrowings']
+    kind: money
+    require_period: true
+    require_basis: true
+  partners_contribution_crore:
+    sources: [audited_financials]
+    labels: ["Partners' Contribution", 'Partners Contribution']
+    kind: money
+    require_period: true
+    require_basis: true
+  partners_current_account_crore:
+    sources: [audited_financials]
+    labels: ["Partners' Current Account", "Partners'Current Account", 'Partners Current Account']
+    kind: money
+    require_period: true
+    require_basis: true
+  pbt_crore:
+    sources: [audited_financials]
+    labels: ['profit/(loss) before tax', 'profit before tax', 'profit before taxation']
+    kind: money
+    require_period: true
+    require_basis: true
+  net_tax_crore:
+    sources: [audited_financials]
+    labels: ['net tax expense / (benefit)', 'net tax expense', 'total tax expense', 'total tax expenses']
+    kind: money
+    require_period: true
+    require_basis: true
+  finance_cost_crore:
+    sources: [audited_financials]
+    labels: ['finance costs', 'finance cost']
+    kind: money
+    require_period: true
+    require_basis: true
+  da_crore:
+    sources: [audited_financials]
+    labels: ['depreciation and amortisation expense', 'depreciation and amortization expense', 'depreciation and amortization expenses', 'depreciation and amortisation', 'depreciation and amortization']
+    kind: money
+    require_period: true
+    require_basis: true
+  term_interest_due_crore:
+    sources: [audited_financials]
+    labels: ['interest due on term debt', 'interest on term loans']
+    kind: money
+    require_period: true
+    require_basis: true
+  principal_due_crore:
+    sources: [audited_financials]
+    labels: ['scheduled principal repayments due', 'principal repayment due during the year']
+    kind: money
+    require_period: true
+    require_basis: true
+  ebitda_crore:
+    sources: [audited_financials]
+    labels: ['ebitda', 'operating profit ( EBITDA )', 'operating profit (EBITDA)', 'earnings before interest tax depreciation and amortisation']
+    kind: money
+    require_period: true
+    require_basis: true
+  cfads_crore:
+    sources: [audited_financials]
+    labels: ['cash flow available for debt service']
+    kind: money
+    require_period: true
+    require_basis: true
+  debt_service_crore:
+    sources: [audited_financials]
+    labels: ['total debt service']
+    kind: money
+    require_period: true
+    require_basis: true
+  total_debt_crore:
+    sources: [audited_financials]
+    labels: ['total debt']
+    kind: money
+    require_period: true
+    require_basis: true
+  total_equity_crore:
+    sources: [audited_financials]
+    labels: ['total equity']
+    kind: money
+    require_period: true
+    require_basis: true
+metrics:
+  annual_revenue_crore:
+    sources: [audited_financials]
+    labels: ['revenue from operations', 'annual revenue', 'total revenue', 'turnover', 'net revenue']
+    kind: money
+    require_period: true
+    require_basis: true
+  pat_crore:
+    sources: [audited_financials]
+    labels: ['profit after tax', 'profit for the year', 'profit for the period', 'net profit after tax', 'profit/(loss) after tax', 'profit/(loss) for the year', 'profit/(loss) for the period', 'profit/(loss) for the year after tax']
+    kind: money
+    require_period: true
+    require_basis: true
+  ebitda_margin_pct:
+    sources: [audited_financials]
+    labels: ['ebitda margin']
+    kind: percent
+    require_period: true
+    require_basis: true
+  dscr:
+    sources: [audited_financials]
+    labels: ['debt service coverage ratio', 'dscr']
+    kind: ratio
+    require_period: true
+    require_basis: true
+  debt_to_equity:
+    sources: [audited_financials]
+    labels: ['debt equity ratio', 'debt to equity ratio', 'debt/equity ratio', 'debt-equity ratio', 'debt / equity']
+    kind: ratio
+    require_period: true
+    require_basis: true
+  debt_to_ebitda:
+    sources: [audited_financials]
+    labels: ['debt to ebitda', 'debt/ebitda']
+    kind: ratio
+    require_period: true
+    require_basis: true
+  collateral_cover:
+    sources: [valuation, audited_financials]
+    labels: ['collateral cover', 'security coverage ratio', 'security cover']
+    kind: ratio
+    require_period: true
+    require_basis: false
+  employee_count:
+    sources: [payroll, registration, audited_financials]
+    labels: ['total employees', 'number of employees', 'total persons employed', 'employee count']
+    kind: count
+    require_period: false
+    require_basis: false
+  years_operating:
+    sources: [registration, agreement, audited_financials]
+    labels: ['years operating', 'years of operations', 'years in operation']
+    kind: count
+    require_period: false
+    require_basis: false
+  borrower_name:
+    entity_heading_pattern: '(?:[A-Z][A-Za-z&.,()\-]*[ \t]+){1,16}(?:LIMITED|Limited|LTD\.?|Ltd\.?|LLP)'
+    sources: [registration, agreement, audited_financials]
+    labels: ['legal name', 'name of enterprise', 'name of company', 'name of llp', 'borrower name']
+    kind: text
+    require_period: false
+    require_basis: false
+  industry:
+    nic_level: 2
+    table_column: Description of Main Activity Group
+    sources: [registration, audited_financials]
+    labels: ['industry', 'sector']
+    kind: text
+    require_period: false
+    require_basis: false
+  sub_industry:
+    nic_level: 5
+    table_column: Description of Business Activity
+    sources: [registration, audited_financials]
+    labels: ['sub-industry', 'sub industry', 'business activity', 'major activity']
+    kind: text
+    require_period: false
+    require_basis: false
+  region:
+    sources: [registration, utility_bill, agreement, audited_financials]
+    labels: ['region', 'registered office', 'registered address', 'service address', 'address of enterprise']
+    kind: text
+    require_period: false
+    require_basis: false

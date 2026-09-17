@@ -86,8 +86,7 @@ class SinglePassReasoner:
         )
         evidence_numbers = _numeric_variants(cited_text)
         if any(
-            not group.intersection(evidence_numbers)
-            for group in _numeric_groups(answer.answer)
+            not group.intersection(evidence_numbers) for group in _numeric_groups(answer.answer)
         ):
             raise ValueError("single-pass answer contains a number unsupported by cited evidence")
         unsupported = _unsupported_answer_terms(answer.answer, question, cited_text)

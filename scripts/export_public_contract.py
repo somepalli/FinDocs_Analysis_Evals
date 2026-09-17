@@ -10,6 +10,12 @@ from typing import Any
 from pydantic import BaseModel
 
 from findociq.api.schema import (
+    DocumentSetExtractRequest,
+    DocumentSetRequest,
+    DocumentSetResponse,
+    DocumentSetValidationRequest,
+    DocumentSetValidationResponse,
+    EvidenceAssessmentResponse,
     ExtractRequest,
     ExtractResponse,
     IngestBatchRequest,
@@ -26,6 +32,12 @@ CONTRACT_PATH = Path("contracts/findociq-public-http-contract.json")
 MODELS: dict[str, type[BaseModel]] = {
     model.__name__: model
     for model in (
+        DocumentSetRequest,
+        DocumentSetResponse,
+        DocumentSetValidationRequest,
+        DocumentSetValidationResponse,
+        DocumentSetExtractRequest,
+        EvidenceAssessmentResponse,
         ExtractRequest,
         ProductionExtractRequest,
         ExtractResponse,
@@ -57,11 +69,24 @@ def build_contract() -> dict[str, object]:
     return {
         "bundle_version": "1.0",
         "service": "findociq",
-        "supported_contract_versions": ["1.0", "2.0"],
+        "supported_contract_versions": ["1.0", "2.0", "2.1"],
         "endpoints": {
+            "/v1/document-sets/validate": {
+                "request": "DocumentSetValidationRequest",
+                "response": "DocumentSetValidationResponse",
+            },
+            "/v1/document-sets": {
+                "request": "DocumentSetRequest",
+                "response": "DocumentSetResponse",
+            },
+            "/v1/evidence-assessments": {
+                "request": "DocumentSetExtractRequest",
+                "response": "EvidenceAssessmentResponse",
+            },
             "/extract": {
                 "development_request": "ExtractRequest",
                 "production_request": "ProductionExtractRequest",
+                "document_set_request": "DocumentSetExtractRequest",
                 "response": "ExtractResponse",
             },
             "/v1/documents": {
@@ -72,9 +97,7 @@ def build_contract() -> dict[str, object]:
                 "request": "IngestBatchRequest",
                 "response": "IngestBatchResponse",
             },
-            "/v1/ingestion-activity/{batch_id}": {
-                "response": "IngestionActivityResponse"
-            },
+            "/v1/ingestion-activity/{batch_id}": {"response": "IngestionActivityResponse"},
             "/v1/applications/{application_id}/documents": {
                 "request": "RetentionDeleteRequest",
                 "response": "RetentionDeleteResponse",
@@ -99,9 +122,7 @@ def main() -> None:
     expected = encoded_contract()
     if args.check:
         if not args.output.exists() or args.output.read_text(encoding="utf-8") != expected:
-            raise SystemExit(
-                f"public contract snapshot is stale; run: uv run python {__file__}"
-            )
+            raise SystemExit(f"public contract snapshot is stale; run: uv run python {__file__}")
         print(f"public contract snapshot is current: {args.output}")
         return
     args.output.parent.mkdir(parents=True, exist_ok=True)
